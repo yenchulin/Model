@@ -1,6 +1,7 @@
 import numpy as np
 import random
 import linecache
+from nltk import sent_tokenize
 from keras.utils import Sequence
 from keras.utils.np_utils import to_categorical
 
@@ -10,10 +11,10 @@ class Vocab:
         self.id2word = {v: k for k, v in self.word2id.items()}
         self.unk_token = unk_token
 
-    def build_vocab(self, sentences, min_count=1):
+    def build_vocab(self, data, min_count=1):
         word_counter = {}
-        for sentence in sentences:
-            for word in sentence:
+        for line in data:
+            for word in line:
                 word_counter[word] = word_counter.get(word, 0) + 1
 
         for word, count in sorted(word_counter.items(), key=lambda x: -x[1]):
@@ -33,12 +34,12 @@ def load_data(file_path):
     # Arguments:
         file_path: str
     # Returns:
-        data: list of list of str, data[i] means a sentence, data[i][j] means a
-            word.
+        data: list of list of str, data[i] means a line, data[i][j] means a
+             word.
     '''
     data = []
     for line in open(file_path, encoding='utf-8'):
-        words = line.strip().split()  # スペースで単語を分割
+        words = line.strip().split()
         data.append(words)
     return data
 
@@ -54,14 +55,70 @@ def sentence_to_ids(vocab, sentence, UNK=3):
     # ids += [EOS]  # EOSを加える
     return ids
 
-def pad_seq(seq, max_length, PAD=0):
+def get_sentence_word_ids(data_row, vocab, BOS=None, EOS=None):
+    '''
+    # Arguments:
+        data_row: a line from the data
+        vocab: SeqGAN.utils.Vocab used for lookup word ids
+        BOS (optional): the BOS id, default is None. If is None, BOS will not be added at the begin of the sentence.
+        EOS (optional): the EOS id, default is None. If is None, EOS will not be added at the end of the sentence.
+    # Returns:
+        paragraph: list of list of list of ids, 
+                data[i] means a paragraph, (i=1)
+                data[i][j] means a sentence,
+                data[i][j][k] means a word.
+        num_sentence: int, number of sentence in this paragraph (data_row)
+        max_num_words: int, max number of words in a sentence in this paragraph (data_row)
+    '''
+    paragraph = []
+    max_num_words = 0
+    for sentence in sent_tokenize(data_row):
+        words = sentence.strip().split() # list of str
+
+        word_ids = []
+        if BOS != None:
+            word_ids.append(BOS)
+        word_ids.extend(sentence_to_ids(vocab, words)) # list of ids
+        if EOS != None:
+            word_ids.append(EOS) 
+
+        # ex. word_ids = [BOS, 8, 10, 6, 3, EOS]
+
+        paragraph.append(word_ids) # ex. [[BOS, 8, 10, 6, 3, EOS], [BOS, 5, 13, 9, 7, 25, EOS]]
+        max_num_words = max(max_num_words, len(word_ids))
+    
+    return paragraph, len(paragraph), max_num_words
+
+def drop_paragraphs(paragraphs, max_num_sentences, max_num_words):
     """
-    :param seq: list of int,
-    :param max_length: int,
-    :return seq: list of int,
+    # Arguments:
+        paragraphs: list of paragraphs.
+        max_num_sentences: int.
+        max_num_words: int.
+    # Returns:
+        paragraphs: list of paragraphs.
     """
-    seq += [PAD for i in range(max_length - len(seq))]
-    return seq
+    for i, _ in enumerate(paragraphs): # for each paragraph in the list
+        paragraphs[i] = paragraphs[i][:max_num_sentences] # drop sentences that are over max_num_sentences
+        for j, _ in enumerate(paragraphs[i]): # for each sentence in the given paragraph
+            paragraphs[i][j] = paragraphs[i][j][:max_num_words] # drop words that are over max_num_words
+    
+    return paragraphs
+
+def pad_paragraph(paragraph, max_num_sentences, max_num_words, PAD):
+    """
+    # Arguments:
+        paragraph: list of list of list of ids.
+        max_num_sentences: int.
+        max_num_words: int.
+    # Returns:
+        paragraph: list of list of list of ids.
+    """
+    paragraph.extend([[PAD]] * (max_num_sentences - len(paragraph)))
+    for sentence in paragraph:
+        sentence.extend([PAD] * (max_num_words - len(sentence)))
+    
+    return paragraph
 
 def print_ids(ids, vocab, verbose=True, exclude_mark=True, PAD=0, BOS=1, EOS=2):
     '''
@@ -89,8 +146,8 @@ class GeneratorPretrainingGenerator(Sequence):
     # Arguments
         path: str, path to data x
         B: int, batch size
-        T (optional): int or None, default is None.
-            if int, T is the max length of sequential data.
+        T (optional): the max number of sentences in a document (review), default is None (count in data)
+        N (optional): the max number of words in a sentence, default is None (count in data)
         min_count (optional): int, minimum of word frequency for building vocabrary
         shuffle (optional): bool
 
@@ -119,7 +176,7 @@ class GeneratorPretrainingGenerator(Sequence):
         print(x_words)
         >>> <S> I have a <UNK> </S> <PAD> ... <PAD>
     '''
-    def __init__(self, path, B, T=40, min_count=1, shuffle=True):
+    def __init__(self, path, B, T=None, N=None, min_count=1, shuffle=True):
         self.PAD = 0
         self.BOS = 1
         self.EOS = 2
@@ -131,6 +188,7 @@ class GeneratorPretrainingGenerator(Sequence):
         self.path = path
         self.B = B
         self.T = T
+        self.N = N
         self.min_count = min_count
 
         default_dict = {
@@ -140,8 +198,8 @@ class GeneratorPretrainingGenerator(Sequence):
             self.UNK_TOKEN: self.UNK,
         }
         self.vocab = Vocab(default_dict, self.UNK_TOKEN)
-        sentences = load_data(path)
-        self.vocab.build_vocab(sentences, self.min_count)
+        data = load_data(path)
+        self.vocab.build_vocab(data, self.min_count)
 
         self.word2id = self.vocab.word2id
         self.id2word = self.vocab.id2word
@@ -165,50 +223,48 @@ class GeneratorPretrainingGenerator(Sequence):
             idx: int, index of batch
         # Returns:
             None: no input is needed for generator pretraining.
-            x: numpy.array, shape = (B, max_length)
-            y_true: numpy.array, shape = (B, max_length, V)
+            x: numpy.array, shape = (B, max_num_sentences, max_num_words)
+            y_true: numpy.array, shape = (B, max_num_sentences, max_num_words, V)
                 labels with one-hot encoding.
-                max_length is the max length of sequence in the batch.
-                if length smaller than max_length, the data will be padded.
+                max_num_sentences is the max number of sentences in the batch.
+                if number of sentences is smaller than max_num_sentences, the data will be padded.
+
+                max_num_words is the max number of words in the batch.
+                if number of sentences is smaller than max_num_words, the data will be padded.
         '''
         x, y_true = [], []
         start = idx * self.B + 1
         end = (idx + 1) * self.B + 1
-        max_length = 0
+        
+        max_num_sentences = 0
+        max_num_words = 0
+
         for i in range(start, end):
             if self.shuffle:
                 idx = self.shuffled_indices[i]
             else:
                 idx = i
-            sentence = linecache.getline(self.path, idx) # str
-            words = sentence.strip().split()  # list of str
-            ids = sentence_to_ids(self.vocab, words) # list of ids
 
-            ids_x, ids_y_true = [], []
+            paragraph = linecache.getline(self.path, idx) # str
+            paragraph_ids_x, num_sentence, local_max_num_words = get_sentence_word_ids(paragraph, self.vocab, self.BOS, self.EOS)
+            paragraph_ids_y_true, _, _ = get_sentence_word_ids(paragraph, self.vocab, EOS=self.EOS) 
 
-            ids_x.append(self.BOS)
-            ids_x.extend(ids)
-            ids_x.append(self.EOS) # ex. [BOS, 8, 10, 6, 3, EOS]
-            x.append(ids_x)
-
-            ids_y_true.extend(ids)
-            ids_y_true.append(self.EOS) # ex. [8, 10, 6, 3, EOS]
-            y_true.append(ids_y_true)
-
-            max_length = max(max_length, len(ids_x))
+            x.append(paragraph_ids_x)
+            y_true.append(paragraph_ids_y_true)
+            max_num_sentences = max(max_num_sentences, num_sentence)
+            max_num_words = max(max_num_words, local_max_num_words)
 
         if self.T is not None:
-            max_length = self.T
+            max_num_sentences = self.T
+        if self.N is not None:
+            max_num_words = self.N
 
-        for i, ids in enumerate(x):
-            x[i] = x[i][:max_length]
-        for i, ids in enumerate(y_true):
-            y_true[i] = y_true[i][:max_length]
-
-        x = [pad_seq(sen, max_length) for sen in x]
+        x = drop_paragraphs(x, max_num_sentences, max_num_words)
+        x = [pad_paragraph(p, max_num_sentences, max_num_words, self.PAD) for p in x]
         x = np.array(x, dtype=np.int32)
 
-        y_true = [pad_seq(sen, max_length) for sen in y_true]
+        y_true = drop_paragraphs(y_true, max_num_sentences, max_num_words)
+        y_true = [pad_paragraph(p, max_num_sentences, max_num_words, self.PAD) for p in y_true]
         y_true = np.array(y_true, dtype=np.int32)
         y_true = to_categorical(y_true, num_classes=self.V)
 
@@ -243,8 +299,8 @@ class DiscriminatorGenerator(Sequence):
         path_pos: str, path to true data
         path_neg: str, path to generated data
         B: int, batch size
-        T (optional): int or None, default is None.
-            if int, T is the max length of sequential data.
+        T (optional): the max number of sentences in a document (review), default is None (count in data)
+        N (optional): the max number of words in a sentence, default is None (count in data)
         min_count (optional): int, minimum of word frequency for building vocabrary
         shuffle (optional): bool
 
@@ -273,7 +329,7 @@ class DiscriminatorGenerator(Sequence):
         print(x_words)
         >>> I have a <UNK> </S> <PAD> ... <PAD>
     '''
-    def __init__(self, path_pos, path_neg, B, T=40, min_count=1, shuffle=True):
+    def __init__(self, path_pos, path_neg, B, T=None, N=None, min_count=1, shuffle=True):
         self.PAD = 0
         self.BOS = 1
         self.EOS = 2
@@ -286,6 +342,7 @@ class DiscriminatorGenerator(Sequence):
         self.path_neg = path_neg
         self.B = B
         self.T = T
+        self.N = N
         self.min_count = min_count
 
         default_dict = {
@@ -295,8 +352,8 @@ class DiscriminatorGenerator(Sequence):
             self.UNK_TOKEN: self.UNK,
         }
         self.vocab = Vocab(default_dict, self.UNK_TOKEN)
-        sentences = load_data(path_pos)
-        self.vocab.build_vocab(sentences, self.min_count)
+        data = load_data(path_pos)
+        self.vocab.build_vocab(data, self.min_count)
 
         self.word2id = self.vocab.word2id
         self.id2word = self.vocab.id2word
@@ -322,7 +379,7 @@ class DiscriminatorGenerator(Sequence):
             idx: int, index of batch
         # Returns:
             None: no input is needed for generator pretraining.
-            X: numpy.array, shape = (B, max_length)
+            X: numpy.array, shape = (B, max_num_sentences, max_num_words)
             Y: numpy.array, shape = (B, )
                 labels indicate whether sentences are true data or generated data.
                 if true data, y = 1. Else if generated data, y = 0.
@@ -330,7 +387,10 @@ class DiscriminatorGenerator(Sequence):
         X, Y = [], []
         start = idx * self.B + 1
         end = (idx + 1) * self.B + 1
-        max_length = 0
+
+        max_num_sentences = 0
+        max_num_words = 0
+
         for i in range(start, end):
             idx = self.indicies[i]
             is_pos = 1
@@ -340,28 +400,24 @@ class DiscriminatorGenerator(Sequence):
             idx = idx - 1
 
             if is_pos == 1:
-                sentence = linecache.getline(self.path_pos, idx) # str
+                paragraph = linecache.getline(self.path_pos, idx) # str
+                paragraph_ids_x, num_sentence, local_max_num_words = get_sentence_word_ids(paragraph, self.vocab, EOS=self.EOS)
             elif is_pos == 0:
-                sentence = linecache.getline(self.path_neg, idx) # str
+                paragraph = linecache.getline(self.path_neg, idx) # str
+                paragraph_ids_x, num_sentence, local_max_num_words = get_sentence_word_ids(paragraph, self.vocab, EOS=self.EOS)
 
-            words = sentence.strip().split()  # list of str
-            ids = sentence_to_ids(self.vocab, words) # list of ids
-
-            x = []
-            x.extend(ids)
-            x.append(self.EOS) # ex. [8, 10, 6, 3, EOS]
-            X.append(x)
+            X.append(paragraph_ids_x)
             Y.append(is_pos)
-
-            max_length = max(max_length, len(x))
+            max_num_sentences = max(max_num_sentences, num_sentence)
+            max_num_words = max(max_num_words, local_max_num_words)
 
         if self.T is not None:
-            max_length = self.T
+            max_num_sentences = self.T
+        if self.N is not None:
+            max_num_words = self.N
 
-        for i, ids in enumerate(X):
-            X[i] = X[i][:max_length]
-
-        X = [pad_seq(sen, max_length) for sen in X]
+        X = drop_paragraphs(X, max_num_sentences, max_num_words)
+        X = [pad_paragraph(p, max_num_sentences, max_num_words, self.PAD) for p in X]
         X = np.array(X, dtype=np.int32)
 
         return (X, Y)

@@ -8,7 +8,8 @@ When changing new dataset to run,
 it is required to change T and generate_samples
 """
 B = 32 # batch size
-T = 135 # Max length of sentence
+T = 5 # Max sentences in a document
+N = 30 # Max words in a sentence
 g_E = 64 # Generator embedding size
 g_H = 64 # Generator LSTM hidden size
 g_lr = 1e-5
