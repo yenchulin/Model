@@ -16,7 +16,7 @@ class Trainer(object):
     '''
     Manage training
     '''
-    def __init__(self, B, T, g_E, g_H, d_E, d_H, d_dropout, g_lr=1e-3, d_lr=1e-3,
+    def __init__(self, B, T, N, g_E, g_H, d_E, d_H, d_dropout, g_lr=1e-3, d_lr=1e-3,
         n_sample=16, generate_samples=10000, init_eps=0.1):
         self.B, self.T = B, T
         self.g_E, self.g_H = g_E, g_H
@@ -46,7 +46,7 @@ class Trainer(object):
         self.discriminator = Discriminator(self.V, d_E, d_H, d_dropout)
         self.env = Environment(self.discriminator, self.g_data, self.g_beta, n_sample=n_sample)
 
-        self.generator_pre = GeneratorPretraining(self.V, g_E, g_H)
+        self.generator_pre = GeneratorPretraining(self.V, T, N, g_E, g_H)
 
     def pre_train(self, g_epochs, d_epochs, g_pre_path ,d_pre_path, g_lr=1e-3, d_lr=1e-3):
         self.pre_train_generator(g_epochs=g_epochs, g_pre_path=g_pre_path, lr=g_lr)

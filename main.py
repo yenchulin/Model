@@ -42,7 +42,7 @@ g_weights_path = os.path.join(save, 'generator.pkl')
 d_weights_path = os.path.join(save, 'discriminator.hdf5')
 
 
-trainer = Trainer(B, T, g_E, g_H, d_E, d_H, d_dropout, g_lr=g_lr, d_lr=d_lr, n_sample=n_sample, generate_samples=generate_samples)
+trainer = Trainer(B, T, N, g_E, g_H, d_E, d_H, d_dropout, g_lr=g_lr, d_lr=d_lr, n_sample=n_sample, generate_samples=generate_samples)
 
 
 # Pretraining for adversarial training

@@ -10,26 +10,43 @@ from keras.utils import to_categorical
 import tensorflow as tf
 import pickle
 
-def GeneratorPretraining(V, E, H):
+def GeneratorPretraining(V, T, N, E, H):
     '''
     Model for Generator pretraining. This model's weights should be shared with
         Generator.
     # Arguments:
         V: int, Vocabrary size
+        T: int, Max sentences in a paragraph
+        N: int, Max words in a sentence
         E: int, Embedding size
         H: int, LSTM hidden size
     # Returns:
         generator_pretraining: keras Model
-            input: word ids, shape = (B, T)
-            output: word probability, shape = (B, T, V)
+            input: word ids, shape = (B, T, N)
+            output: word probability, shape = (B, T, N, V)
     '''
     # in comment, B means batch size, T means lengths of time steps.
-    input = Input(shape=(None,), dtype='int32', name='Input') # (B, T)
-    out = Embedding(V, E, mask_zero=True, name='Embedding')(input) # (B, T, E)
-    out = LSTM(H, return_sequences=True, name='LSTM')(out)  # (B, T, H)
+    input = Input(shape=(T, N), dtype='int32', name='Input') # (B, T, N)
+    out = TimeDistributed(
+        Embedding(V, 512, mask_zero=True),  
+        name="WordEmbedding")(input) # (B, T, N, 512)
+    
+    out = Lambda(lambda x: tf.reduce_mean(x, axis=2), name="SentenceEmbedding")(out) # average word embeddings (B, T, 512)
+
+    out = LSTM(512, return_sequences=True, name='ParagraphRNN')(out) # (B, T, 512)
+
+    out = LSTM(1024, return_sequences=True, name='SentenceRNN')(out) # (B, T, 1024)
+
+    out = Lambda(lambda x: tf.reshape(tf.tile(x, [1,1,N]), [tf.shape(x)[0], T, N, 1024]))(out) # duplicate 1024-embedding for N times (B, T, N, 1024)
+
+    out = TimeDistributed(
+        LSTM(512, return_sequences=True),
+        name="WordRNN")(out) # (B, T, N, 512)
+
     out = TimeDistributed(
         Dense(V, activation='softmax', name='DenseSoftmax'),
-        name='TimeDenseSoftmax')(out)    # (B, T, V)
+        name='VocabDistribution')(out) # (B, T, N, V)
+
     generator_pretraining = Model(input, out)
     return generator_pretraining
 
