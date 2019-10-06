@@ -78,6 +78,8 @@ class Trainer(object):
             path_pos=self.path_pos,
             path_neg=self.path_neg,
             B=self.B,
+            T=self.T,
+            N=self.N,
             shuffle=True)
 
         d_adam = Adam(lr)
@@ -149,6 +151,8 @@ class Trainer(object):
                     path_pos=self.path_pos,
                     path_neg=self.path_neg,
                     B=self.B,
+                    T=self.T,
+                    N=self.N,
                     shuffle=True)
                 self.discriminator.fit_generator(
                     self.d_data,
