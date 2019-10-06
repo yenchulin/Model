@@ -18,7 +18,7 @@ class Trainer(object):
     '''
     def __init__(self, B, T, N, g_E, g_H, d_E, d_H, d_dropout, g_lr=1e-3, d_lr=1e-3,
         n_sample=16, generate_samples=10000, init_eps=0.1):
-        self.B, self.T = B, T
+        self.B, self.T, self.N = B, T, N
         self.g_E, self.g_H = g_E, g_H
         self.d_E, self.d_H = d_E, d_H
         self.d_dropout = d_dropout
@@ -33,13 +33,14 @@ class Trainer(object):
             self.path_pos,
             B=B,
             T=T,
-            min_count=1)
+            N=N)
         if os.path.exists(self.path_neg):
             self.d_data = DiscriminatorGenerator(
                 path_pos=self.path_pos,
                 path_neg=self.path_neg,
-                B=self.B,
-                shuffle=True)
+                B=B,
+                T=T,
+                N=N)
         self.V = self.g_data.V
         self.agent = Agent(sess, B, self.V, g_E, g_H, g_lr)
         self.g_beta = Agent(sess, B, self.V, g_E, g_H, g_lr)

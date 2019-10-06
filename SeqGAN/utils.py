@@ -55,7 +55,7 @@ def sentence_to_ids(vocab, sentence, UNK=3):
     # ids += [EOS]  # EOSを加える
     return ids
 
-def get_sentence_word_ids(data_row, vocab, BOS=None, EOS=None):
+def get_paragraph_ids(data_row, vocab, BOS=None, EOS=None):
     '''
     # Arguments:
         data_row: a line from the data
@@ -67,11 +67,8 @@ def get_sentence_word_ids(data_row, vocab, BOS=None, EOS=None):
                 data[i] means a paragraph, (i=1)
                 data[i][j] means a sentence,
                 data[i][j][k] means a word.
-        num_sentence: int, number of sentence in this paragraph (data_row)
-        max_num_words: int, max number of words in a sentence in this paragraph (data_row)
     '''
     paragraph = []
-    max_num_words = 0
     for sentence in sent_tokenize(data_row):
         words = sentence.strip().split() # list of str
 
@@ -85,9 +82,8 @@ def get_sentence_word_ids(data_row, vocab, BOS=None, EOS=None):
         # ex. word_ids = [BOS, 8, 10, 6, 3, EOS]
 
         paragraph.append(word_ids) # ex. [[BOS, 8, 10, 6, 3, EOS], [BOS, 5, 13, 9, 7, 25, EOS]]
-        max_num_words = max(max_num_words, len(word_ids))
     
-    return paragraph, len(paragraph), max_num_words
+    return paragraph
 
 def drop_paragraphs(paragraphs, max_num_sentences, max_num_words):
     """
@@ -146,8 +142,8 @@ class GeneratorPretrainingGenerator(Sequence):
     # Arguments
         path: str, path to data x
         B: int, batch size
-        T (optional): the max number of sentences in a document (review), default is None (count in data)
-        N (optional): the max number of words in a sentence, default is None (count in data)
+        T: the max number of sentences in a document (review)
+        N: the max number of words in a sentence
         min_count (optional): int, minimum of word frequency for building vocabrary
         shuffle (optional): bool
 
@@ -176,7 +172,7 @@ class GeneratorPretrainingGenerator(Sequence):
         print(x_words)
         >>> <S> I have a <UNK> </S> <PAD> ... <PAD>
     '''
-    def __init__(self, path, B, T=None, N=None, min_count=1, shuffle=True):
+    def __init__(self, path, B, T, N, min_count=1, shuffle=True):
         self.PAD = 0
         self.BOS = 1
         self.EOS = 2
@@ -223,21 +219,19 @@ class GeneratorPretrainingGenerator(Sequence):
             idx: int, index of batch
         # Returns:
             None: no input is needed for generator pretraining.
-            x: numpy.array, shape = (B, max_num_sentences, max_num_words)
-            y_true: numpy.array, shape = (B, max_num_sentences, max_num_words, V)
+            x: numpy.array, shape = (B, T, N)
+            y_true: numpy.array, shape = (B, T, N, V)
                 labels with one-hot encoding.
-                max_num_sentences is the max number of sentences in the batch.
+                
+                T is the max number of sentences in the batch.
                 if number of sentences is smaller than max_num_sentences, the data will be padded.
 
-                max_num_words is the max number of words in the batch.
+                N is the max number of words in the batch.
                 if number of sentences is smaller than max_num_words, the data will be padded.
         '''
         x, y_true = [], []
         start = idx * self.B + 1
         end = (idx + 1) * self.B + 1
-        
-        max_num_sentences = 0
-        max_num_words = 0
 
         for i in range(start, end):
             if self.shuffle:
@@ -246,25 +240,18 @@ class GeneratorPretrainingGenerator(Sequence):
                 idx = i
 
             paragraph = linecache.getline(self.path, idx) # str
-            paragraph_ids_x, num_sentence, local_max_num_words = get_sentence_word_ids(paragraph, self.vocab, self.BOS, self.EOS)
-            paragraph_ids_y_true, _, _ = get_sentence_word_ids(paragraph, self.vocab, EOS=self.EOS) 
+            paragraph_ids_x = get_paragraph_ids(paragraph, self.vocab, self.BOS, self.EOS)
+            paragraph_ids_y_true = get_paragraph_ids(paragraph, self.vocab, EOS=self.EOS) 
 
             x.append(paragraph_ids_x)
             y_true.append(paragraph_ids_y_true)
-            max_num_sentences = max(max_num_sentences, num_sentence)
-            max_num_words = max(max_num_words, local_max_num_words)
 
-        if self.T is not None:
-            max_num_sentences = self.T
-        if self.N is not None:
-            max_num_words = self.N
-
-        x = drop_paragraphs(x, max_num_sentences, max_num_words)
-        x = [pad_paragraph(p, max_num_sentences, max_num_words, self.PAD) for p in x]
+        x = drop_paragraphs(x, self.T, self.N)
+        x = [pad_paragraph(p, self.T, self.N, self.PAD) for p in x]
         x = np.array(x, dtype=np.int32)
 
-        y_true = drop_paragraphs(y_true, max_num_sentences, max_num_words)
-        y_true = [pad_paragraph(p, max_num_sentences, max_num_words, self.PAD) for p in y_true]
+        y_true = drop_paragraphs(y_true, self.T, self.N)
+        y_true = [pad_paragraph(p, self.T, self.N, self.PAD) for p in y_true]
         y_true = np.array(y_true, dtype=np.int32)
         y_true = to_categorical(y_true, num_classes=self.V)
 
@@ -299,8 +286,8 @@ class DiscriminatorGenerator(Sequence):
         path_pos: str, path to true data
         path_neg: str, path to generated data
         B: int, batch size
-        T (optional): the max number of sentences in a document (review), default is None (count in data)
-        N (optional): the max number of words in a sentence, default is None (count in data)
+        T: the max number of sentences in a document (review)
+        N: the max number of words in a sentence
         min_count (optional): int, minimum of word frequency for building vocabrary
         shuffle (optional): bool
 
@@ -329,7 +316,7 @@ class DiscriminatorGenerator(Sequence):
         print(x_words)
         >>> I have a <UNK> </S> <PAD> ... <PAD>
     '''
-    def __init__(self, path_pos, path_neg, B, T=None, N=None, min_count=1, shuffle=True):
+    def __init__(self, path_pos, path_neg, B, T, N, min_count=1, shuffle=True):
         self.PAD = 0
         self.BOS = 1
         self.EOS = 2
@@ -379,7 +366,7 @@ class DiscriminatorGenerator(Sequence):
             idx: int, index of batch
         # Returns:
             None: no input is needed for generator pretraining.
-            X: numpy.array, shape = (B, max_num_sentences, max_num_words)
+            X: numpy.array, shape = (B, T, N)
             Y: numpy.array, shape = (B, )
                 labels indicate whether sentences are true data or generated data.
                 if true data, y = 1. Else if generated data, y = 0.
@@ -387,9 +374,6 @@ class DiscriminatorGenerator(Sequence):
         X, Y = [], []
         start = idx * self.B + 1
         end = (idx + 1) * self.B + 1
-
-        max_num_sentences = 0
-        max_num_words = 0
 
         for i in range(start, end):
             idx = self.indicies[i]
@@ -401,23 +385,16 @@ class DiscriminatorGenerator(Sequence):
 
             if is_pos == 1:
                 paragraph = linecache.getline(self.path_pos, idx) # str
-                paragraph_ids_x, num_sentence, local_max_num_words = get_sentence_word_ids(paragraph, self.vocab, EOS=self.EOS)
+                paragraph_ids_x = get_paragraph_ids(paragraph, self.vocab, EOS=self.EOS)
             elif is_pos == 0:
                 paragraph = linecache.getline(self.path_neg, idx) # str
-                paragraph_ids_x, num_sentence, local_max_num_words = get_sentence_word_ids(paragraph, self.vocab, EOS=self.EOS)
+                paragraph_ids_x = get_paragraph_ids(paragraph, self.vocab, EOS=self.EOS)
 
             X.append(paragraph_ids_x)
             Y.append(is_pos)
-            max_num_sentences = max(max_num_sentences, num_sentence)
-            max_num_words = max(max_num_words, local_max_num_words)
 
-        if self.T is not None:
-            max_num_sentences = self.T
-        if self.N is not None:
-            max_num_words = self.N
-
-        X = drop_paragraphs(X, max_num_sentences, max_num_words)
-        X = [pad_paragraph(p, max_num_sentences, max_num_words, self.PAD) for p in X]
+        X = drop_paragraphs(X, self.T, self.N)
+        X = [pad_paragraph(p, self.T, self.N, self.PAD) for p in X]
         X = np.array(X, dtype=np.int32)
 
         return (X, Y)

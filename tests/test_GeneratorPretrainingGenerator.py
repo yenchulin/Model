@@ -11,6 +11,8 @@ class TestGeneratorPretrainingGenerator(unittest.TestCase):
         gen = GeneratorPretrainingGenerator(
             os.path.join(top, 'data', 'kokoro_parsed.txt'),
             B=8,
+            T=4,
+            N=10,
             shuffle=False)
         gen.reset()
         x, y_true = gen.next()
@@ -23,17 +25,15 @@ class TestGeneratorPretrainingGenerator(unittest.TestCase):
         There is a street in front of the building with many cars on it. (14 words)
         """
         expected_text = [
-            ['<S>', 'A', 'large', 'building', 'with', 'bars', 'on', 'the', 'windows', 'in', 'front', 'of', 'it.', '</S>', '<PAD>', '<PAD>'], 
-            ['<S>', 'There', 'is', 'people', 'walking', 'in', 'front', 'of', 'the', 'building.', '</S>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>'],
-            ['<S>', 'There', 'is', 'a', 'street', 'in', 'front', 'of', 'the', 'building', 'with', 'many', 'cars', 'on', 'it.', '</S>']
+            ['<S>', 'A', 'large', 'building', 'with', 'bars', 'on', 'the', 'windows', 'in'], 
+            ['<S>', 'There', 'is', 'people', 'walking', 'in', 'front', 'of', 'the', 'building.'],
+            ['<S>', 'There', 'is', 'a', 'street', 'in', 'front', 'of', 'the', 'building'],
+            ['<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>']
         ] 
-        
-        num_sentence = len(expected_text)
-        max_num_words = 16
 
         actual_text = []
-        for sentence in x[0][:num_sentence]:
-            sentence = [gen.id2word[word] for word in sentence[:max_num_words]]
+        for sentence in x[0]:
+            sentence = [gen.id2word[word] for word in sentence]
             actual_text.append(sentence)
         
         self.sub_test(actual_text, expected_text, msg='x text test')
@@ -44,9 +44,6 @@ class TestGeneratorPretrainingGenerator(unittest.TestCase):
             sentence_ids = [gen.word2id[word] for word in sentence]
             expected_ids.append(sentence_ids)
 
-        actual_ids = []
-        for sentence in x[0][:num_sentence]:
-            sentence = sentence[:max_num_words].tolist()
-            actual_ids.append(sentence)
+        actual_ids = x[0].tolist()
         
         self.sub_test(actual_ids, expected_ids, msg='x ids test')
