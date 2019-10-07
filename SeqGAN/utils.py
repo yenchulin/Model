@@ -241,7 +241,7 @@ class GeneratorPretrainingGenerator(Sequence):
 
             paragraph = linecache.getline(self.path, idx) # str
             paragraph_ids_x = get_paragraph_ids(paragraph, self.vocab, self.BOS, self.EOS)
-            paragraph_ids_y_true = get_paragraph_ids(paragraph, self.vocab, EOS=self.EOS) 
+            paragraph_ids_y_true = get_paragraph_ids(paragraph, self.vocab, EOS=self.EOS)
 
             x.append(paragraph_ids_x)
             y_true.append(paragraph_ids_y_true)

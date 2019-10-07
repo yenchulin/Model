@@ -10,6 +10,27 @@ from keras.utils import to_categorical
 import tensorflow as tf
 import pickle
 
+def visualAttention(x):
+    '''
+    # Arguments:
+        x: hidden state from LSTM, shape (B, 4096), a tensor
+    # Variables:
+        feature: tensor with shape (1, 50, 4096), 50 visual features with 4096 dim
+    # Returns:
+        context: tensor with shape (B, 4096), visual context vector
+    '''
+    feature = [range(4096)] * 50 # TODO: should be replaced
+    feature = np.array(feature)
+    feature = tf.constant(feature, dtype=tf.float32) # (50, 4096)
+    feature = tf.expand_dims(feature, 0) # (1, 50,4096)
+
+    x_expand = tf.reshape(tf.tile(x, [1,tf.shape(feature)[1]]), [tf.shape(x)[0], tf.shape(feature)[1], tf.shape(feature)[2]]) # duplicate 4096-hidden-state for 50 times (B, 50, 4096)
+    dot = tf.reduce_sum(tf.multiply(feature, x_expand), -1) # (B, 50)
+    weight = tf.nn.softmax(dot)
+    weight = tf.expand_dims(weight, -1) # (B, 50, 1)
+    context = tf.reduce_sum(tf.multiply(weight, feature), -2) # (B, 4096)
+    return context
+
 def GeneratorPretraining(V, T, N, E, H):
     '''
     Model for Generator pretraining. This model's weights should be shared with
@@ -35,6 +56,15 @@ def GeneratorPretraining(V, T, N, E, H):
 
     out = LSTM(512, return_sequences=True, name='ParagraphRNN')(out) # (B, T, 512)
 
+    # out = Concatenate([pragraph_h, sentence_previous_h]) # (B, T, 512 + 1024)
+    out = TimeDistributed(
+        Dense(4096, activation='softmax'),
+        name='ExpandDim')(out) # (B, T, 4096)
+    
+    out = TimeDistributed(
+        Lambda(visualAttention),
+        name='VisualAttention')(out) # (B, T, 4096)
+
     out = LSTM(1024, return_sequences=True, name='SentenceRNN')(out) # (B, T, 1024)
 
     out = Lambda(lambda x: tf.reshape(tf.tile(x, [1,1,N]), [tf.shape(x)[0], T, N, 1024]))(out) # duplicate 1024-embedding for N times (B, T, N, 1024)
@@ -44,7 +74,7 @@ def GeneratorPretraining(V, T, N, E, H):
         name="WordRNN")(out) # (B, T, N, 512)
 
     out = TimeDistributed(
-        Dense(V, activation='softmax', name='DenseSoftmax'),
+        Dense(V, activation='softmax'),
         name='VocabDistribution')(out) # (B, T, N, V)
 
     generator_pretraining = Model(input, out)
