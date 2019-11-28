@@ -48,6 +48,9 @@ class Trainer(object):
         self.env = Environment(self.discriminator, self.g_data, self.g_beta, n_sample=n_sample)
 
         self.generator_pre = GeneratorPretraining(self.V, T, N, g_E, g_H)
+        self.g_data.model_s = self.generator_pre.model_1
+        self.g_data.model_w = self.generator_pre.model_2
+        self.g_data.graph = tf.get_default_graph()
 
     def pre_train(self, g_epochs, d_epochs, g_pre_path ,d_pre_path, g_lr=1e-3, d_lr=1e-3):
         self.pre_train_generator(g_epochs=g_epochs, g_pre_path=g_pre_path, lr=g_lr)
@@ -57,15 +60,15 @@ class Trainer(object):
         self.g_pre_path = g_pre_path
 
         g_adam = Adam(lr)
-        self.generator_pre.compile(g_adam, 'categorical_crossentropy')
+        self.generator_pre.model.compile(g_adam, 'categorical_crossentropy')
         print('Generator pre-training')
-        self.generator_pre.summary()
+        self.generator_pre.model.summary()
 
-        self.generator_pre.fit_generator(
+        self.generator_pre.model.fit_generator(
             self.g_data,
             steps_per_epoch=None,
             epochs=g_epochs)
-        self.generator_pre.save_weights(self.g_pre_path)
+        self.generator_pre.model.save_weights(self.g_pre_path)
         self.reflect_pre_train()
 
     def pre_train_discriminator(self, d_epochs, d_pre_path, lr):
@@ -94,12 +97,12 @@ class Trainer(object):
         self.discriminator.save(self.d_pre_path)
 
     def load_pre_train(self, g_pre_path, d_pre_path):
-        self.generator_pre.load_weights(g_pre_path)
+        self.generator_pre.model.load_weights(g_pre_path)
         self.reflect_pre_train()
         self.discriminator.load_weights(d_pre_path)
 
     def load_pre_train_g(self, g_pre_path):
-        self.generator_pre.load_weights(g_pre_path)
+        self.generator_pre.model.load_weights(g_pre_path)
         self.reflect_pre_train()
 
     def load_pre_train_d(self, d_pre_path):
@@ -108,7 +111,7 @@ class Trainer(object):
 
     def reflect_pre_train(self):
         i = 0
-        for layer in self.generator_pre.layers:
+        for layer in self.generator_pre.model.layers:
             if len(layer.get_weights()) != 0:
                 w = layer.get_weights()
                 self.agent.generator.layers[i].set_weights(w)

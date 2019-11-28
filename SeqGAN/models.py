@@ -2,7 +2,7 @@ import numpy as np
 import keras
 import keras.backend as K
 from keras.models import Model
-from keras.layers import Input, Lambda, Activation, Dropout, Concatenate
+from keras.layers import Input, Lambda, Activation, Dropout, concatenate, Reshape, RepeatVector
 from keras.layers import Dense, Embedding, LSTM, Conv1D, GlobalMaxPooling1D
 from keras.layers import Activation
 from keras.layers.wrappers import TimeDistributed
@@ -28,10 +28,11 @@ def visualAttention(x):
     dot = tf.reduce_sum(tf.multiply(feature, x_expand), -1) # (B, 50)
     weight = tf.nn.softmax(dot)
     weight = tf.expand_dims(weight, -1) # (B, 50, 1)
+    # TODO: Normalization
     context = tf.reduce_sum(tf.multiply(weight, feature), -2) # (B, 4096)
     return context
 
-def GeneratorPretraining(V, T, N, E, H):
+class GeneratorPretraining():
     '''
     Model for Generator pretraining. This model's weights should be shared with
         Generator.
@@ -39,46 +40,77 @@ def GeneratorPretraining(V, T, N, E, H):
         V: int, Vocabrary size
         T: int, Max sentences in a paragraph
         N: int, Max words in a sentence
-        E: int, Embedding size
-        H: int, LSTM hidden size
-    # Returns:
-        generator_pretraining: keras Model
-            input: word ids, shape = (B, T, N)
-            output: word probability, shape = (B, T, N, V)
+    # Parameters:
+        model_1: 
+            Model for training h_s.
+            Inputs are data, h_s_pre. 
+            Output is h_s.
+        model_2: 
+            Model for training h_w.
+            Inputs are h_s, h_w_pre. 
+            Output is h_w.
+        model_3: 
+            Model for the final output, probability distribution.
+            Input is h_w. 
+            Output is the probability distribution of a paragraph (B, T, N, V).
+        model: 
+            The merged model of model_1, model_2, model_3. 
+            Inputs are data, h_s_pre, h_w_pre. 
+            Output is the probability distribution of a paragraph (B, T, N, V).
     '''
-    # in comment, B means batch size, T means lengths of time steps.
-    input = Input(shape=(T, N), dtype='int32', name='Input') # (B, T, N)
-    out = TimeDistributed(
-        Embedding(V, 512, mask_zero=True),  
-        name="WordEmbedding")(input) # (B, T, N, 512)
-    
-    out = Lambda(lambda x: tf.reduce_mean(x, axis=2), name="SentenceEmbedding")(out) # average word embeddings (B, T, 512)
+    def __init__(self, V, T, N, E, H):
+        self.V = V
+        self.T = T
+        self.N = N
+        self.__build_graph__()
 
-    out = LSTM(512, return_sequences=True, name='ParagraphRNN')(out) # (B, T, 512)
+    def __build_graph__(self):
+        # in comment, B means batch size, T means lengths of time steps.
 
-    # out = Concatenate([pragraph_h, sentence_previous_h]) # (B, T, 512 + 1024)
-    out = TimeDistributed(
-        Dense(4096, activation='softmax'),
-        name='ExpandDim')(out) # (B, T, 4096)
-    
-    out = TimeDistributed(
-        Lambda(visualAttention),
-        name='VisualAttention')(out) # (B, T, 4096)
+        # Model 1 (1st part)
+        data = Input(shape=(self.T, self.N), dtype='int32', name='Input') # (B, T, N)
+        h_s_in = Input(shape=(self.T, 1024), dtype='float32', name='SentencePreviousHidden') # (B, T, 1024)
+        
+        out = TimeDistributed(
+            Embedding(self.V, 512, mask_zero=True),  
+            name="WordEmbedding")(data) # (B, T, N, 512)
+        out = Lambda(lambda x: tf.reduce_mean(x, axis=2), name="SentenceEmbedding")(out) # average word embeddings (B, T, 512
+        h_p = LSTM(512, return_sequences=True, name='ParagraphRNN')(out) # (B, T, 512)
+        out = concatenate([h_p, h_s_in]) # (B, T, 512 + 1024)
+        out = TimeDistributed(
+            Dense(4096, activation='softmax'),
+            name='ExpandDim')(out) # (B, T, 4096)
+        out = TimeDistributed(
+            Lambda(visualAttention),
+            name='VisualAttention')(out) # (B, T, 4096)
+        h_s = LSTM(1024, return_sequences=True, name='SentenceRNN')(out) # (B, T, 1024)
+        self.model_1 = Model(inputs=[data, h_s_in], outputs=h_s, name='model_1')
 
-    out = LSTM(1024, return_sequences=True, name='SentenceRNN')(out) # (B, T, 1024)
+        # Model 2 (2nd part)
+        h_w_in = Input(shape=(self.T, self.N, 512), dtype='float32', name='WordPreviousHidden') # (B, T, N, 512)
+        h_s = Input(shape=(self.T, 1024), dtype='float32', name='SentenceHidden') # (B, T, 1024)
 
-    out = Lambda(lambda x: tf.reshape(tf.tile(x, [1,1,N]), [tf.shape(x)[0], T, N, 1024]))(out) # duplicate 1024-embedding for N times (B, T, N, 1024)
+        out = Lambda(lambda x: tf.reshape(tf.tile(x, [1,1,self.N]), [tf.shape(x)[0], self.T, self.N, 1024]))(h_s) # duplicate 1024-embedding for N times (B, T, N, 1024)
+        out = concatenate([out, h_w_in]) # (B, T, N, 1024 + 512)
+        out = TimeDistributed(
+            Dense(512, activation='softmax'),
+            name='ShrinkDim')(out) # (B, T, N, 512)
+        h_w = TimeDistributed(
+            LSTM(512, return_sequences=True),
+            name="WordRNN")(out) # (B, T, N, 512)
+        self.model_2 = Model(inputs=[h_w_in, h_s], outputs=h_w, name='model_2')
 
-    out = TimeDistributed(
-        LSTM(512, return_sequences=True),
-        name="WordRNN")(out) # (B, T, N, 512)
+        # Model 3 (3rd part)
+        h_w = Input(shape=(self.T, self.N, 512), dtype='float32', name="WordHidden") # (B, T, N, 512)
+        out = TimeDistributed(
+            Dense(self.V, activation='softmax'),
+            name='VocabDistribution')(h_w) # (B, T, N, V)
+        self.model_3 = Model(inputs=h_w, outputs=out, name='model_3')
 
-    out = TimeDistributed(
-        Dense(V, activation='softmax'),
-        name='VocabDistribution')(out) # (B, T, N, V)
-
-    generator_pretraining = Model(input, out)
-    return generator_pretraining
+        out = self.model_1([data, h_s_in])
+        out = self.model_2([h_w_in, out])
+        out = self.model_3(out)
+        self.model = Model(inputs=[data, h_s_in, h_w_in], outputs=out)
 
 class Generator():
     'Create Generator, which generate a next word.'

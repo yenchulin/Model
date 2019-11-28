@@ -157,6 +157,9 @@ class GeneratorPretrainingGenerator(Sequence):
         raw_vocab: Vocab.raw_vocab
         V: the size of vocab
         n_data: the number of rows of data
+        graph: tf.get_default_graph(), force tf to run model in the same session
+        model_s: keras.layer.Model, used to get h_s_pre
+        model_w: keras.layer.Model, used to get h_w_pre
 
     # Examples
         generator = VAESequenceGenerator('./data/train_x.txt', 32)
@@ -207,6 +210,12 @@ class GeneratorPretrainingGenerator(Sequence):
         self.idx = 0
         self.len = self.__len__()
         self.reset()
+        self.graph = None
+        self.model_s = None
+        self.model_w = None
+        self.h_s_pre_pre = np.random.rand(self.B, self.T, 1024) # sentence hidden state at B-2 (B, T ,1024)
+        self.h_w_pre_pre = np.random.rand(self.B, self.T, self.N, 512) # word hidden state at B-2 (B, T, N, 512)
+        self.x_pre = None # data at B-1 (B, T, N)
 
 
     def __len__(self):
@@ -254,8 +263,20 @@ class GeneratorPretrainingGenerator(Sequence):
         y_true = [pad_paragraph(p, self.T, self.N, self.PAD) for p in y_true]
         y_true = np.array(y_true, dtype=np.int32)
         y_true = to_categorical(y_true, num_classes=self.V)
-
-        return (x, y_true)
+ 
+        if self.model_s != None and self.model_w != None:
+            self.x_pre = x
+            if idx == 0:
+                return ([x, self.h_s_pre_pre, self.h_w_pre_pre], y_true)
+            else:
+                with self.graph.as_default():
+                    h_s_pre = self.model_s.predict([self.x_pre, self.h_s_pre_pre]) # sentence hidden state at B-1 (B, T ,1024)
+                    h_w_pre = self.model_w.predict([self.h_w_pre_pre, h_s_pre]) # word hidden state at B-1 (B, T, N, 512)
+                self.h_s_pre_pre = h_s_pre
+                self.h_w_pre_pre = h_w_pre
+                return ([x, h_s_pre, h_w_pre], y_true)
+        else:
+            return (x, y_true)
 
     def __iter__(self):
         return self
