@@ -78,7 +78,7 @@ class GeneratorPretraining():
         h_p = LSTM(512, return_sequences=True, name='ParagraphRNN')(out) # (B, T, 512)
         out = concatenate([h_p, h_s_pre]) # (B, T, 512 + 1024)
         out = TimeDistributed(
-            Dense(4096, activation='softmax'),
+            Dense(4096),
             name='ExpandDim')(out) # (B, T, 4096)
         out = TimeDistributed(
             Lambda(visualAttention),
@@ -93,7 +93,7 @@ class GeneratorPretraining():
         out = Lambda(lambda x: tf.reshape(tf.tile(x, [1,1,self.N]), [tf.shape(x)[0], self.T, self.N, 1024]))(h_s) # duplicate 1024-embedding for N times (B, T, N, 1024)
         out = concatenate([out, h_w_pre]) # (B, T, N, 1024 + 512)
         out = TimeDistributed(
-            Dense(512, activation='softmax'),
+            Dense(512),
             name='ShrinkDim')(out) # (B, T, N, 512)
         h_w = TimeDistributed(
             LSTM(512, return_sequences=True),
@@ -126,52 +126,101 @@ class Generator():
         '''
         self.sess = sess
         self.B = B
+        self.N = 30
         self.V = V
         self.E = E
         self.H = H
         self.lr = lr
-        self._build_gragh()
+        self.layers = []
+        self._build_sentence_graph()
+        self._build_word_gragh()
         self.reset_rnn_state()
 
-    def _build_gragh(self):
-        state_in = tf.placeholder(tf.float32, shape=(None, 1))
-        h_in = tf.placeholder(tf.float32, shape=(None, self.H))
-        c_in = tf.placeholder(tf.float32, shape=(None, self.H))
-        action = tf.placeholder(tf.float32, shape=(None, self.V)) # onehot (B, V)
-        reward  =tf.placeholder(tf.float32, shape=(None, ))
+    def _build_sentence_graph(self):
+        state_sentence = tf.placeholder(tf.float32, shape=(None, 1, self.N)) # previous generated sentence
+        s_h_in = tf.placeholder(tf.float32, shape=(None, 1024)) # sentence RNN initial hidden state
+        s_c_in = tf.placeholder(tf.float32, shape=(None, 1024)) # sentence RNN initial cell state
+        p_h_in = tf.placeholder(tf.float32, shape=(None, 512)) # paragraph RNN initial hidden state
+        p_c_in = tf.placeholder(tf.float32, shape=(None, 512)) # paragraph RNN initial cell state
 
-        self.layers = []
+        wordEmbedding = Embedding(self.V, 512, mask_zero=True, name='WordEmbedding')
+        out = wordEmbedding(state_sentence) # (B, 1, N, 512)
+        self.layers.append(wordEmbedding)
+        
+        out = Lambda(lambda x: tf.reduce_mean(x, axis=2), name='SentenceEmbedding')(out) # average word embeddings (B, 1, 512)
+        
+        paragraphRNN = LSTM(512, return_state=True, name='ParagraphRNN')
+        h_p, next_p_h, next_p_c = paragraphRNN(out, initial_state=[p_h_in, p_c_in]) # (B, 512)
+        self.layers.append(paragraphRNN)
 
-        embedding = Embedding(self.V, self.E, mask_zero=True, name='Embedding')
-        out = embedding(state_in) # (B, 1, E)
-        self.layers.append(embedding)
+        out = concatenate([h_p, s_h_in]) # (B, 512 + 1024)
+        out = Reshape((1, 512+1024))(out) # (B, 1, 512 + 1024)
+        
+        expandDense = Dense(4096, name='ExpandDim')
+        out = expandDense(out) # (B, 1, 4096)
+        self.layers.append(expandDense)
 
-        lstm = LSTM(self.H, return_state=True, name='LSTM')
-        out, next_h, next_c = lstm(out, initial_state=[h_in, c_in])  # (B, H)
-        self.layers.append(lstm)
+        # TODO: Attention
 
-        dense = Dense(self.V, activation='softmax', name='DenseSoftmax')
-        prob = dense(out)    # (B, V)
-        self.layers.append(dense)
+        sentenceRNN = LSTM(1024, return_state=True, name='SentenceRNN')
+        h_s, next_s_h, next_s_c = sentenceRNN(out, initial_state=[s_h_in, s_c_in]) # (B, 1, 1024)
+        self.layers.append(sentenceRNN)
+
+        self.h_s_output = h_s # duplicated with word_graph
+        self.p_h_in = p_h_in
+        self.p_c_in = p_c_in
+        self.s_h_in = s_h_in
+        self.s_c_in = s_c_in
+        self.next_p_h = next_p_h
+        self.next_p_c = next_p_c
+        self.next_s_h = next_s_h
+        self.next_s_c = next_s_c
+
+        self.init_s_op = tf.global_variables_initializer()
+        self.sess.run(self.init_s_op)
+
+    def _build_word_gragh(self):
+        h_s = tf.placeholder(tf.float32, shape=(None, 1024)) # sentence hidden state
+        w_h_in = tf.placeholder(tf.float32, shape=(None, 512)) # word RNN initial hidden state
+        w_c_in = tf.placeholder(tf.float32, shape=(None, 512)) # word RNN initial cell state
+        action = tf.placeholder(tf.float32, shape=(None, self.V)) # onehot (B, V) next word to select
+        reward = tf.placeholder(tf.float32, shape=(None, ))
+
+        out = concatenate([h_s, w_h_in]) # (B, 1024 + 512)
+        out = Reshape((1, 1024+512))(out) # (B, 1, 1024 + 512)
+
+        shrinkDense = Dense(512, name='ShrinkDim')
+        out = shrinkDense(out)   # (B, 1, 512)
+        self.layers.append(shrinkDense)
+
+        # TODO: Attention
+
+        wordRNN = LSTM(512, return_state=True, name='WordRRNN')
+        out, next_w_h, next_w_c = wordRNN(out, initial_state=[w_h_in, w_c_in])  # (B, 512)
+        self.layers.append(wordRNN)
+
+        vocabDistrib = Dense(self.V, activation='softmax', name='VocabDistribution')
+        prob = vocabDistrib(out)   # (B, V)
+        self.layers.append(vocabDistrib)
 
         log_prob = tf.log(tf.reduce_mean(prob * action, axis=-1)) # (B, )
         loss = - log_prob * reward
         optimizer = tf.train.AdamOptimizer(learning_rate=self.lr)
         minimize = optimizer.minimize(loss)
 
-        self.state_in = state_in
-        self.h_in = h_in
-        self.c_in = c_in
+        self.h_s_input = h_s
+        self.w_h_in = w_h_in
+        self.w_c_in = w_c_in
         self.action = action
         self.reward = reward
         self.prob = prob
-        self.next_h = next_h
-        self.next_c = next_c
+        self.next_w_h = next_w_h
+        self.next_w_c = next_w_c
         self.minimize = minimize
         self.loss = loss
 
-        self.init_op = tf.global_variables_initializer()
-        self.sess.run(self.init_op)
+        self.init_w_op = tf.global_variables_initializer()
+        self.sess.run(self.init_w_op)
 
     def reset_rnn_state(self):
         self.h = np.zeros([self.B, self.H])

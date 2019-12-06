@@ -111,7 +111,7 @@ class Trainer(object):
 
     def reflect_pre_train(self):
         i = 0
-        for layer in self.generator_pre.model.layers:
+        for layer in self.generator_pre.model_1.layers + self.generator_pre.model_2.layers + self.generator_pre.model_3.layers:
             if len(layer.get_weights()) != 0:
                 w = layer.get_weights()
                 self.agent.generator.layers[i].set_weights(w)
