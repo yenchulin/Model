@@ -19,8 +19,7 @@ def visualAttention(x):
     # Returns:
         context: tensor with shape (B, 4096), visual context vector
     '''
-    feature = [range(4096)] * 50 # TODO: should be replaced
-    feature = np.array(feature)
+    feature = np.full([50, 4096], 1) # TODO: should be replaced
     feature = tf.constant(feature, dtype=tf.float32) # (50, 4096)
     feature = tf.expand_dims(feature, 0) # (1, 50,4096)
 
@@ -95,6 +94,9 @@ class GeneratorPretraining():
         out = TimeDistributed(
             Dense(512),
             name='ShrinkDim')(out) # (B, T, N, 512)
+        
+        # TODO: Attention
+
         h_w = TimeDistributed(
             LSTM(512, return_sequences=True),
             name="WordRNN")(out) # (B, T, N, 512)
@@ -137,14 +139,16 @@ class Generator():
         self.reset_rnn_state()
 
     def _build_sentence_graph(self):
-        state_sentence = tf.placeholder(tf.float32, shape=(None, 1, self.N)) # previous generated sentence
+        state_sentence = tf.placeholder(tf.float32, shape=(None, self.N)) # previous generated sentence
         s_h_in = tf.placeholder(tf.float32, shape=(None, 1024)) # sentence RNN initial hidden state
         s_c_in = tf.placeholder(tf.float32, shape=(None, 1024)) # sentence RNN initial cell state
         p_h_in = tf.placeholder(tf.float32, shape=(None, 512)) # paragraph RNN initial hidden state
         p_c_in = tf.placeholder(tf.float32, shape=(None, 512)) # paragraph RNN initial cell state
 
+        out = Reshape((1, self.N))(state_sentence) # (B, 1, N)
+        
         wordEmbedding = Embedding(self.V, 512, mask_zero=True, name='WordEmbedding')
-        out = wordEmbedding(state_sentence) # (B, 1, N, 512)
+        out = wordEmbedding(out) # (B, 1, N, 512)
         self.layers.append(wordEmbedding)
         
         out = Lambda(lambda x: tf.reduce_mean(x, axis=2), name='SentenceEmbedding')(out) # average word embeddings (B, 1, 512)
@@ -163,14 +167,15 @@ class Generator():
         # TODO: Attention
 
         sentenceRNN = LSTM(1024, return_state=True, name='SentenceRNN')
-        h_s, next_s_h, next_s_c = sentenceRNN(out, initial_state=[s_h_in, s_c_in]) # (B, 1, 1024)
+        h_s, next_s_h, next_s_c = sentenceRNN(out, initial_state=[s_h_in, s_c_in]) # (B, 1024)
         self.layers.append(sentenceRNN)
 
-        self.h_s_output = h_s # duplicated with word_graph
+        self.state_sentence = state_sentence
         self.p_h_in = p_h_in
         self.p_c_in = p_c_in
         self.s_h_in = s_h_in
         self.s_c_in = s_c_in
+        self.h_s_output = h_s
         self.next_p_h = next_p_h
         self.next_p_c = next_p_c
         self.next_s_h = next_s_h
@@ -223,8 +228,12 @@ class Generator():
         self.sess.run(self.init_w_op)
 
     def reset_rnn_state(self):
-        self.h = np.zeros([self.B, self.H])
-        self.c = np.zeros([self.B, self.H])
+        self.p_h = np.zeros([self.B, 512])
+        self.p_c = np.zeros([self.B, 512])
+        self.s_h = np.zeros([self.B, 1024])
+        self.s_c = np.zeros([self.B, 1024])
+        self.w_h = np.zeros([self.B, 512])
+        self.w_c = np.zeros([self.B, 512])
 
     def set_rnn_state(self, h, c):
         '''
@@ -237,6 +246,38 @@ class Generator():
 
     def get_rnn_state(self):
         return self.h, self.c
+
+    def predict_h_s(self, state_sentence):
+        feed_dict = {
+            self.state_sentence: state_sentence,
+            self.p_h_in: self.p_h,
+            self.p_c_in: self.p_c,
+            self.s_h_in: self.s_h,
+            self.s_c_in: self.s_c
+        }
+        h_s, next_s_h, next_s_c, next_p_h, next_p_c = self.sess.run(
+            [self.h_s_output, self.next_s_h, self.next_s_c, self.next_p_h, self.next_p_c],
+            feed_dict)
+        
+        self.s_h = next_s_h
+        self.s_c = next_s_c
+        self.p_h = next_p_h
+        self.p_c = next_p_c
+        return h_s
+
+    def predict_word(self, h_s):
+        feed_dict = {
+            self.h_s_input: h_s,
+            self.w_h_in: self.w_h,
+            self.w_c_in: self.w_c
+        }
+        prob, next_w_h, next_w_c = self.sess.run(
+            [self.prob, self.next_w_h, self.next_w_c],
+            feed_dict)
+        
+        self.w_h = next_w_h
+        self.w_c = next_w_c
+        return prob
 
     def predict(self, state, stateful=True):
         '''
@@ -351,25 +392,52 @@ class Generator():
         self.reset_rnn_state()
         return actions
 
+    def sampling_paragraph(self, T):
+        self.reset_rnn_state()
+        paragraph = []
+
+        # previous sentence initial value 
+        sentence = np.zeros([self.B, self.N], dtype=np.int32)
+        sentence[:, 0] = 1 # BOS
+        sentence[:, 1] = 2 # EOS
+        
+        for _ in range(T):
+            h_s = self.predict_h_s(sentence)
+            sentence = np.zeros([self.B, 0], dtype=np.int32)
+            for _ in range(self.N):
+                prob = self.predict_word(h_s)
+                action = self.sampling_word(prob).reshape(-1, 1)
+                sentence = np.concatenate([sentence, action], axis=-1) # (B, N)
+            paragraph.append(sentence) # (T, B, N)
+
+        paragraph = np.array(paragraph)
+        paragraph = paragraph.transpose([1, 0, 2]) # (B, T, N)
+        self.reset_rnn_state()
+        return paragraph
+
     def generate_samples(self, T, g_data, num, output_file):
         '''
-        Generate sample sentences to output file
+        Generate sample paragraphs to output file
         # Arguments:
-            T: int, max time steps
+            T: int, Max sentences in a paragraph
             g_data: SeqGAN.utils.GeneratorPretrainingGenerator
-            num: int, number of sentences
+            num: int, number of sample paragraphs to generate
             output_file: str, path
         '''
-        sentences=[]
+        def id2word(ids):
+            return ' '.join([g_data.id2word[_id] for _id in ids])
+
+        paragraphs = []
         for _ in range(num // self.B + 1):
-            actions = self.sampling_sentence(T) # (B, T)
-            actions_list = actions.tolist()
-            for sentence_id in actions_list:
-                sentence = [g_data.id2word[action] for action in sentence_id]
-                sentences.append(sentence)
+            paragraph = self.sampling_paragraph(T) # (B, T, N)
+            paragraph = np.apply_along_axis(id2word, -1, paragraph) # (B, T)
+            paragraph = paragraph.tolist()
+            for batch in paragraph:
+                paragraphs.append(batch)
+
         output_str = ''
         for i in range(num):
-            output_str += ' '.join(sentences[i]) + '\n'
+            output_str += ' '.join(paragraphs[i]) + '\n'
         with open(output_file, 'w', encoding='utf-8') as f:
             f.write(output_str)
 
