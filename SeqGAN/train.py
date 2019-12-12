@@ -61,16 +61,18 @@ class Trainer(object):
         self.g_pre_path = g_pre_path
 
         g_adam = Adam(lr)
-        self.generator_pre.model.compile(g_adam, 'categorical_crossentropy')
+        self.generator_pre.model.compile(g_adam, 'categorical_crossentropy', sample_weight_mode="temporal")
         print('Generator pre-training')
         self.generator_pre.model.summary()
         
         # Pretrain
         for _ in trange(g_epochs, ascii=True):
-            for _ in range(self.g_data.__len__()): # Total number of steps (number of batches = num_samples / batch_size)
+            for _ in range(len(self.g_data)): # Total number of steps (number of batches = num_samples / batch_size)
+                sample = self.g_data.next()
                 self.generator_pre.model.train_on_batch(
-                    x=self.g_data.next()[0],
-                    y=self.g_data.next()[1]
+                    x=sample[0],
+                    y=sample[1],
+                    sample_weight=sample[2]
                 )
 
         self.generator_pre.model.save_weights(self.g_pre_path)

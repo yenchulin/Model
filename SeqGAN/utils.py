@@ -288,8 +288,19 @@ class GeneratorPretrainingGenerator(Sequence):
             self.reset()
 
         x, y_true = self.__getitem__(self.idx)
+        loss_weight = self.sample_loss_weight(x)
+
         self.idx += 1
-        return (x, y_true)
+        return (x, y_true, loss_weight)
+
+    def sample_loss_weight(self, x):
+        """
+        Every sentence's weight (score) will be 30. (will be normalized in keras, no need to manage)
+        So if a sentence has one <PAD> (id=0), the score will minus 1.
+        """
+        sample = x[0] # (B, T, N)
+        loss_weight = np.count_nonzero(sample, axis=-1) # (B, T)
+        return loss_weight
 
     def reset(self):
         self.idx = 0
