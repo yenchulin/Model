@@ -1,7 +1,8 @@
 import numpy as np
 import random
 import linecache
-from nltk import sent_tokenize
+import re
+from nltk.tokenize import sent_tokenize
 from keras.utils import Sequence
 from keras.utils.np_utils import to_categorical
 
@@ -70,6 +71,7 @@ def get_paragraph_ids(data_row, vocab, BOS=None, EOS=None):
     '''
     paragraph = []
     for sentence in sent_tokenize(data_row):
+        sentence = re.sub("[^a-zA-Z0-9]", " ", sentence)
         words = sentence.strip().split() # list of str
 
         word_ids = []

@@ -1,4 +1,4 @@
-from context import unittest, os, GeneratorPretrainingGenerator
+from tests.context import unittest, os, GeneratorPretrainingGenerator
 
 top = os.getcwd()
 
@@ -11,8 +11,8 @@ class TestGeneratorPretrainingGenerator(unittest.TestCase):
         gen = GeneratorPretrainingGenerator(
             os.path.join(top, 'data', 'kokoro_parsed.txt'),
             B=8,
-            T=4,
-            N=10,
+            T=5,
+            N=20,
             shuffle=False)
         gen.reset()
         x, y_true = gen.next()
@@ -25,10 +25,11 @@ class TestGeneratorPretrainingGenerator(unittest.TestCase):
         There is a street in front of the building with many cars on it. (14 words)
         """
         expected_text = [
-            ['<S>', 'A', 'large', 'building', 'with', 'bars', 'on', 'the', 'windows', 'in'], 
-            ['<S>', 'There', 'is', 'people', 'walking', 'in', 'front', 'of', 'the', 'building.'],
-            ['<S>', 'There', 'is', 'a', 'street', 'in', 'front', 'of', 'the', 'building'],
-            ['<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>']
+            ['<S>', 'a', 'large', 'building', 'with', 'bars', 'on', 'the', 'windows', 'in', 'front', 'of', 'it', '</S>', '<PAD>', '<PAD>', '<PAD>','<PAD>', '<PAD>', '<PAD>'], 
+            ['<S>', 'there', 'is', 'people', 'walking', 'in', 'front', 'of', 'the', 'building', '</S>', '<PAD>', '<PAD>', '<PAD>','<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>'],
+            ['<S>', 'there', 'is', 'a', 'street', 'in', 'front', 'of', 'the', 'building', 'with', 'many', 'cars', 'on', 'it', '</S>', '<PAD>', '<PAD>', '<PAD>', '<PAD>'],
+            ['<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>','<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>'],
+            ['<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>','<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>']
         ] 
 
         actual_text = []
