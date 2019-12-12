@@ -2,6 +2,7 @@ from SeqGAN.models import GeneratorPretraining, Discriminator, Generator
 from SeqGAN.utils import GeneratorPretrainingGenerator, DiscriminatorGenerator
 from SeqGAN.rl import Agent, Environment
 from keras.optimizers import Adam
+from tqdm import trange
 import os
 import numpy as np
 import tensorflow as tf
@@ -63,11 +64,15 @@ class Trainer(object):
         self.generator_pre.model.compile(g_adam, 'categorical_crossentropy')
         print('Generator pre-training')
         self.generator_pre.model.summary()
+        
+        # Pretrain
+        for _ in trange(g_epochs, ascii=True):
+            for _ in range(self.g_data.__len__()): # Total number of steps (number of batches = num_samples / batch_size)
+                self.generator_pre.model.train_on_batch(
+                    x=self.g_data.next()[0],
+                    y=self.g_data.next()[1]
+                )
 
-        self.generator_pre.model.fit_generator(
-            self.g_data,
-            steps_per_epoch=None,
-            epochs=g_epochs)
         self.generator_pre.model.save_weights(self.g_pre_path)
         self.reflect_pre_train()
 

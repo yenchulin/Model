@@ -286,7 +286,7 @@ class GeneratorPretrainingGenerator(Sequence):
     def next(self):
         if self.idx >= self.len:
             self.reset()
-            raise StopIteration
+
         x, y_true = self.__getitem__(self.idx)
         self.idx += 1
         return (x, y_true)
