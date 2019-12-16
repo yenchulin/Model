@@ -1,5 +1,5 @@
 from SeqGAN.models import Generator, GeneratorPretraining, Discriminator
-from SeqGAN.utils import DiscriminatorGenerator
+from SeqGAN.utils import DiscriminatorGenerator, Vocab
 import keras.backend as K
 import numpy as np
 
@@ -98,7 +98,6 @@ class Environment(object):
         self.B = data_generator.B
         self.T = data_generator.T
         self.n_sample = n_sample
-        self.BOS = data_generator.BOS
         self.discriminator = discriminator
         self.g_beta = g_beta
         self.reset()
@@ -112,7 +111,7 @@ class Environment(object):
     def reset(self):
         self.t = 1
         self._state = np.zeros([self.B, 1], dtype=np.int32) # ex. [[0], [0], [0]...]
-        self._state[:, 0] = self.BOS # ex. [[1], [1], [1]...]
+        self._state[:, 0] = Vocab.BOS # ex. [[1], [1], [1]...]
         self.g_beta.reset() # Agent reset (g_beta.generator LSTM h, c state to zero vectors)
 
     def step(self, action):

@@ -1,5 +1,5 @@
 from SeqGAN.models import GeneratorPretraining, Discriminator, Generator
-from SeqGAN.utils import GeneratorPretrainingGenerator, DiscriminatorGenerator
+from SeqGAN.utils import GeneratorPretrainingGenerator, DiscriminatorGenerator, Vocab
 from SeqGAN.rl import Agent, Environment
 from keras.optimizers import Adam
 from tqdm import trange
@@ -30,19 +30,22 @@ class Trainer(object):
         self.top = os.getcwd()
         self.path_pos = os.path.join(self.top, 'data', 'kokoro_parsed.txt')
         self.path_neg = os.path.join(self.top, 'data', 'save', 'generated_sentences.txt')
+        self.vocab = Vocab(self.path_pos)
         self.g_data = GeneratorPretrainingGenerator(
-            self.path_pos,
+            path=self.path_pos,
             B=B,
             T=T,
-            N=N)
+            N=N,
+            vocab=self.vocab)
         if os.path.exists(self.path_neg):
             self.d_data = DiscriminatorGenerator(
                 path_pos=self.path_pos,
                 path_neg=self.path_neg,
                 B=B,
                 T=T,
-                N=N)
-        self.V = self.g_data.V
+                N=N,
+                vocab=self.vocab)
+        self.V = self.vocab.V
         self.agent = Agent(sess, B, self.V, g_E, g_H, g_lr)
         self.g_beta = Agent(sess, B, self.V, g_E, g_H, g_lr)
         self.discriminator = Discriminator(self.V, d_E, d_H, d_dropout)
@@ -90,7 +93,7 @@ class Trainer(object):
             B=self.B,
             T=self.T,
             N=self.N,
-            shuffle=True)
+            vocab=self.vocab)
 
         d_adam = Adam(lr)
         self.discriminator.compile(d_adam, 'binary_crossentropy')

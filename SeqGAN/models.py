@@ -279,35 +279,6 @@ class Generator():
         self.w_c = next_w_c
         return prob
 
-    def predict(self, state, stateful=True):
-        '''
-        Predict next action(word) probability
-        # Arguments:
-            state: np.array, previous word ids, shape = (B, 1)
-        # Optional Arguments:
-            stateful: bool, default is True
-                if True, update rnn_state(h, c) to Generator.h, Generator.c
-                    and return prob.
-                else, return prob, next_h, next_c without updating states.
-        # Returns:
-            prob: np.array, shape=(B, V)
-        '''
-        # state = state.reshape(-1, 1)
-        feed_dict = {
-            self.state_in : state,
-            self.h_in : self.h,
-            self.c_in : self.c}
-        prob, next_h, next_c = self.sess.run(
-            [self.prob, self.next_h, self.next_c],
-            feed_dict)
-
-        if stateful:
-            self.h = next_h
-            self.c = next_c
-            return prob
-        else:
-            return prob, next_h, next_c
-
     def update(self, state, action, reward, h=None, c=None, stateful=True):
         '''
         Update weights by Policy Gradient.
@@ -370,28 +341,6 @@ class Generator():
             action[i] = np.random.choice(self.V, p=p) # random select a int value in range(self.V) according to the prob distrbution p
         return action # (B, ) word ids
 
-    def sampling_sentence(self, T, BOS=1):
-        '''
-        # Arguments:
-            T: int, max time steps
-        # Optional Arguments:
-            BOS: int, id for Begin Of Sentence
-        # Returns:
-            actions: numpy array, dtype=int, shape = (B, T)
-        '''
-        self.reset_rnn_state() # set Generator LSTM h, c state to zero vectors
-        action = np.zeros([self.B, 1], dtype=np.int32)
-        action[:, 0] = BOS # ex. [[1], [1], [1]...]
-        actions = action
-        for _ in range(T):
-            prob = self.predict(action) # (B, V)
-            action = self.sampling_word(prob).reshape(-1, 1) # (B, 1) ex. [[20], [2239], [word id]...]
-            actions = np.concatenate([actions, action], axis=-1)  # (B, T) ex. [[1, 20], [1, 2239], [BOS, word id]...]
-        # Remove BOS
-        actions = actions[:, 1:]
-        self.reset_rnn_state()
-        return actions
-
     def sampling_paragraph(self, T):
         self.reset_rnn_state()
         paragraph = []
@@ -424,16 +373,17 @@ class Generator():
             num: int, number of sample paragraphs to generate
             output_file: str, path
         '''
-        def id2word(ids):
-            return ' '.join([g_data.id2word[_id] for _id in ids])
-
         paragraphs = []
-        for _ in range(num // self.B + 1):
-            paragraph = self.sampling_paragraph(T) # (B, T, N)
-            paragraph = np.apply_along_axis(id2word, -1, paragraph) # (B, T)
-            paragraph = paragraph.tolist()
-            for batch in paragraph:
-                paragraphs.append(batch)
+        for i in range(num // self.B + 1):
+            batch_paragraphs = self.sampling_paragraph(T) # paragraph with word ids (B, T, N)
+            batch_paragraphs = batch_paragraphs.tolist()
+            for paragraph in batch_paragraphs:
+                para = []
+                for sentence in paragraph:
+                    sentence = [g_data.vocab.id2word[word] for word in sentence]
+                    sentence = " ".join(sentence)
+                    para.append(sentence)
+                paragraphs.append(para)
 
         output_str = ''
         for i in range(num):
@@ -454,6 +404,55 @@ class Generator():
             weights = pickle.load(f)
         for layer, w in zip(self.layers, weights):
             layer.set_weights(w)
+
+def DisciriminatorParagraph(B, T, N, V, dropout=0.1):
+    '''
+    Paragraph Disciriminator model.
+    # Arguments:
+        B: int, Batch size
+        T: int, Max sentences in a paragraph
+        N: int, Max words in a sentence
+        V: int, Vocabrary size
+        dropout: float
+    # Returns:
+        discriminator: keras model
+            input: sentences, shape = (B, T, N)
+            output: probability (smoothness vlllue) of true sentence or not, shape = (B, T, 1)
+    '''
+    input = Input(shape=(None,), dtype='int32', name='Input')  # (B, T, N)
+    out = Embedding(V, 512, mask_zero=True, name='WordEmbedding')(input)  # (B, T, N, 512)
+    out = Lambda(lambda x: tf.reduce_mean(x, axis=2), name="SentenceEmbedding")(out) # average word embeddings (B, T, 512)
+    out = LSTM(512, return_sequences=True)(out) # (B, T, 512)
+    out = Highway(out, num_layers=1) # (B, T, 512)
+    out = Dropout(dropout, name='Dropout')(out) # (B, T, 512)
+    out = Dense(1, activation='sigmoid', name='FC')(out) # (B, T, 1)
+
+    discriminator = Model(input, out)
+    return discriminator
+
+def DiscriminatorSentence(B, T, N, V, dropout=0.1):
+    '''
+    Sentence Disciriminator model.
+    # Arguments:
+        B: int, Batch size
+        T: int, Max sentences in a paragraph
+        N: int, Max words in a sentence
+        V: int, Vocabrary size
+        dropout: float
+    # Returns:
+        discriminator: keras model
+            input: sentences, shape = (B, T, N)
+            output: probability (smoothness vlllue) of true sentence or not, shape = (B, T, 1)
+    '''
+    input = Input(shape=(None,), dtype='int32', name='Input')  # (B, T, N)
+    out = Embedding(V, 512, mask_zero=True, name='WordEmbedding')(input)  # (B, T, N, 512)
+    out = LSTM(512)(out) # (B, T, 512)
+    out = Highway(out, num_layers=1) # (B, T, 512)
+    out = Dropout(dropout, name='Dropout')(out) # (B, T, 512)
+    out = Dense(1, activation='sigmoid', name='FC')(out) # (B, T, 1)
+
+    discriminator = Model(input, out)
+    return discriminator
 
 def Discriminator(V, E, H=64, dropout=0.1):
     '''
@@ -537,7 +536,7 @@ def Highway(x, num_layers=1, activation='relu', name_prefix=''):
     # Returns:
         out: tensor, shape = (B, input_size)
     '''
-    input_size = K.int_shape(x)[1]
+    input_size = K.int_shape(x)[-1]
     for i in range(num_layers):
         gate_ratio_name = '{}Highway/Gate_ratio_{}'.format(name_prefix, i)
         fc_name = '{}Highway/FC_{}'.format(name_prefix, i)
