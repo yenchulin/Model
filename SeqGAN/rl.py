@@ -32,40 +32,25 @@ class Agent(object):
     def act(self, state, epsilon=0, deterministic=False):
         '''
         # Arguments:
-            state: numpy array, dtype=int, shape = (B, t)
+            state: nparray, dtype = int, previous sentence, shape = (B, N)
             epsilon: float, 0 <= epsilon <= 1,
                 if epsilon is 1, the Agent will act completely random.
         # Returns:
-            action: numpy array, dtype=int, shape = (B, 1)
+            action: nparray, dtype=int, shape = (B, 1)
         '''
-        word = state[:, -1].reshape([-1, 1]) # select the last word of state
-        return self._act_on_word(word, epsilon=epsilon, deterministic=deterministic)
-
-    def _act_on_word(self, word, epsilon=0, deterministic=False, PAD=0, EOS=2):
-        '''
-        # Arguments:
-            word: numpy array, dtype=int, shape = (B, 1),
-                word indicates current word.
-            epsilon: float, 0 <= epsilon <= 1,
-                if epsilon is 1, the Agent will act completely random.
-        # Returns:
-            action: numpy array, dtype=int, shape = (B, 1)
-        '''
-        action = None
-        is_PAD = word == PAD
-        is_EOS = word == EOS
-        is_end = is_PAD.astype(np.int) + is_EOS.astype(np.int)
-        is_end = 1 - is_end
-        is_end = is_end.reshape([self.B, 1])
         if np.random.rand() <= epsilon:
             action = np.random.randint(low=0, high=self.num_actions, size=(self.B, 1))
         elif not deterministic:
-            probs = self.generator.predict(word) # (B, V)
-            action = self.generator.sampling_word(probs).reshape([self.B, 1]) # (B, 1) ex. [[20], [2239], [word id]...]
+            h_s = self.generator.predict_h_s(state) # (B, 1024)    
+            prob = self.generator.predict_word(h_s) # (B, V)
+            action = self.generator.sampling_word(prob).reshape(-1, 1) # (B, 1)
         else:
-            probs = self.generator.predict(word) # (B, T)
-            action = np.argmax(probs, axis=-1).reshape([self.B, 1])
-        return action * is_end # if is_PAD == true or is_EOS == true, is_end == 0, returns a zero vector; else is_end == 1 returns action
+            h_s = self.generator.predict_h_s(state) # (B, 1024) 
+            prob = self.generator.predict_word(h_s) # (B, V)
+            action = np.argmax(prob, axis=-1).reshape(-1, 1) # (B, 1)
+
+        # TODO: have to know whether this is a last word/sentence or not. (refer to is_end in origin Seqgan)
+        return action
 
     def reset(self):
         self.generator.reset_rnn_state()
@@ -91,71 +76,87 @@ class Environment(object):
             g_beta: SeqGAN.rl.Agent, copy of Agent
                 params of g_beta.generator should be updated with those of original
                 generator on regular occasions.
-        # Optional Arguments
+        # Parameters:
+            t: int, an indicator of the previous timestep for sentences
+            n: int, an indicator of the previous timestep for words
+            _state: nparray, dtype=int, previous generated sentences and words, shape = (B, T, N)
+        # Optional Arguments:
             n_sample: int, default is 16, the number of Monte Calro search sample
         '''
         self.data_generator = data_generator
         self.B = data_generator.B
         self.T = data_generator.T
+        self.N = data_generator.N
         self.n_sample = n_sample
         self.discriminator = discriminator
         self.g_beta = g_beta
-        self.reset()
+        self.reset_paragraph()
+        self.reset_sentence()
 
-    def get_state(self):
-        if self.t == 1:
-            return self._state
-        else:
-            return self._state[:, 1:]   # Exclude BOS
+    def get_previous_sentence(self, idx):
+        """
+        Get previous sentence.
+        idx: the previous sentence index.
+        """
+        return self._state_paragraph[:, idx] # (B, N)
 
-    def reset(self):
-        self.t = 1
-        self._state = np.zeros([self.B, 1], dtype=np.int32) # ex. [[0], [0], [0]...]
-        self._state[:, 0] = Vocab.BOS # ex. [[1], [1], [1]...]
+    def reset_paragraph(self):
+        """
+        Should be called when the model is going to generate a new parageaph sample.
+        """
+        # Create the first (initial) sentence in state
+        self._state_paragraph = np.zeros([self.B, 1, self.N], dtype=np.int32) # (B, 1, N)
+        self._state_paragraph[:, 0, 0] = Vocab.BOS
+        self._state_paragraph[:, 0, 1] = Vocab.EOS # <S> </S> <PAD> <PAD>.....
         self.g_beta.reset() # Agent reset (g_beta.generator LSTM h, c state to zero vectors)
 
-    def step(self, action):
+    def reset_sentence(self):
+        """
+        Should be called when the model is going to generate a new sentence in a paragraph sample.
+        """
+        self._state_sentence = np.zeros([self.B, 0]) # (B, 0) with zero words
+        
+    def step(self, action, t, n):
         '''
-        Step t -> t + 1 and returns a result of the Agent action.
+        Step 1-step forward and calculate the reward of the given Agent action.
+        If the action is the last word of the sentence, append the sentence to the paragraph.
         # Arguments:
-            action: numpy array, dtype=int, shape = (B, 1),
-                state is Y_0:t-1, and action is y_t
+            action: numpy array, dtype=int, the selected word, shape = (B, 1)
+            t: current time step when generating the paragraph, the previous sentence index.
+            n: current time step when generating the sentence
         # Returns:
-            next_state: numpy array, dtype=int, shape = (B, t)
-            reward: numpy array, dtype=float, shape = (B, 1)
+            reward: nparray, dtype=float, shape = (B, 1)
             is_episode_end: bool
-            info: dict
         '''
-        self.t = self.t + 1
-
-        reward = self.Q(action, self.n_sample) # caculate the reward of the given action
-        is_episode_end = self.t > self.T
-
-        self._append_state(action) # preparing the next state of the environment
-        next_state = self.get_state()
-        info = None
-
-        return [next_state, reward, is_episode_end, info]
+        is_episode_end = n + 1 >= self.N
+        self._append_word(action)
+        if is_episode_end:
+            self._append_sentence()
+        reward = self.Q(n, is_episode_end, self.n_sample) # calculate the reward of the appended action
+        return reward, is_episode_end
 
     def render(self, head=1):
         for i in range(head):
-            ids = self.get_state()[i]
-            words = [self.data_generator.id2word[id] for id in ids.tolist()]
+            ids = self._state_sentence[i] # (N, )
+            words = [self.data_generator.vocab.id2word[_id] for _id in ids.tolist()]
             print(' '.join(words))
         print('-' * 80)
 
 
-    def Q(self, action, n_sample=16):
+    def Q(self, t, n, is_last_word, n_sample=16):
         '''
-        State-Action value function using Rollout policy
+        State-Action value function using Rollout policy.
+        Calculate the reward of the previous state and action (already appended).
         # Arguments:
-            action: numpy array, dtype=int, shape = (B, 1)
+            t: current time step when generating the paragraph, the previous sentence index.
+            n: current time step when generating the sentence
+            is_last_word: bool
 
         # Optional Arguments:
             n_sample: int, default is 16, number of samples for Monte Calro Search
 
         # Returns:
-            reward: numpy array, dtype=float, shape = (B, ), State-Action value
+            reward: nparray, dtype=float, shape = (B, 1), State-Action value
 
         # Requires:
             t, T: used to define time range.
@@ -163,39 +164,39 @@ class Environment(object):
             action: next words, y[t], used for sentence Y[0:t].
             g_beta: Rollout policy.
         '''
-        h, c = self.g_beta.generator.get_rnn_state()
+        hidden_and_cell_states = self.g_beta.generator.get_rnn_state() # tuple, get the h(s) and c(s) before Monte Carol
         reward = np.zeros([self.B, 1])
-        if self.t == 2:
-            Y_base = self._state    # Initial case
-        else:
-            Y_base = self.get_state()    # (B, t-1)
+        Y = self._state_sentence # (B, n), the sentence that is currently generating words (action appended).
 
-        if self.t >= self.T+1:
-            Y = self._append_state(action, state=Y_base)
+        if is_last_word: # last word, no need to do Monte Carol
             return self.discriminator.predict(Y)
 
         # Rollout
-        for idx_sample in range(n_sample): # first get the whole sentence, and have D predict the score, lastly, repeated n_sample times 
-            Y = Y_base # the state before update (state at t-1)
-            self.g_beta.generator.set_rnn_state(h, c)
-            y_t = self.g_beta.act(Y, epsilon=self.g_beta.eps) # caculate the current state (state at t)
-                                                              # (B, 1) ex. [[20], [2239], [word id]...] or [[0], [0], [0]...] if is end sentence
-            Y = self._append_state(y_t, state=Y) # (B, t) ex. [[46, 20], [75, 2239], [prev word_id, word id]...]
-            for tau in range(self.t+1, self.T): # calculate the rest of the words t+1 to T (Monte Carol)
-                y_tau = self.g_beta.act(Y, epsilon=self.g_beta.eps)
-                Y = self._append_state(y_tau, state=Y)
+        for _ in range(n_sample): # first get the whole sentence, and have D predict the score, lastly, repeated n_sample times 
+            self.g_beta.generator.set_rnn_state(hidden_and_cell_states) # reset the h, c states to the ones before Monte Carol
+            for _ in range(n+1, self.N): # calculate the rest of the words n+1 to N (Monte Carol)
+                y_n = self.g_beta.act(self.get_previous_sentence(t), epsilon=self.g_beta.eps)
+                Y = self._append_word(y_n, state=Y)
             reward += self.discriminator.predict(Y) / n_sample
 
         return reward # (B, 1)
 
-
-    def _append_state(self, word, state=None):
+    def _append_word(self, word, state=None):
         '''
+        Append word to sentence.
         # Arguments:
-            word: numpy array, dtype=int, shape = (B, 1)
+            word: nparray, dtype=int, shape=(B, 1)
+            state: nparray, dtype=int, the sentence that is generating words, shape=(B, n)
         '''
-        word = word.reshape(-1, 1)
         if state is None:
-            self._state = np.concatenate([self._state, word], axis=-1)
+            self._state_sentence = np.concatenate([self._state_sentence, word], axis=-1)
         else:
-            return np.concatenate([state, word], axis= -1)
+            return np.concatenate([state, word], axis=-1)
+
+    def _append_sentence(self):
+        '''
+        Append the sentence state to paragraph.
+        # Arguments:
+            sentence: nparray, dtype=int, shape=(B, N)
+        '''
+        self._state_paragraph = np.concatenate([self._state_paragraph, self._state_sentence.reshape(self.B, 1, self.N)], axis=-2)

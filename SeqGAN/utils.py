@@ -430,9 +430,9 @@ class DiscriminatorGenerator(Sequence):
 
         X = drop_paragraphs(X, self.T, self.N)
         X = pad_paragraph(X, self.T, self.N) # (B, T, N)
-        X = np.array(X, dtype=np.int32)
+        X = np.array(X, dtype=np.int32).reshape(self.B*self.T, self.N) # (B*T, N) reshape for DiscriminatorSentence, not tested
 
-        Y = np.array(Y, dtype=np.int32) # (B, T, 1)
+        Y = np.array(Y, dtype=np.int32).reshape(self.B*self.T, 1) # (B*T, 1) reshape for DiscriminatorSentence, not tested
         return (X, Y)
 
     def __iter__(self):

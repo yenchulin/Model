@@ -1,4 +1,4 @@
-from SeqGAN.models import GeneratorPretraining, Discriminator, Generator
+from SeqGAN.models import GeneratorPretraining, DiscriminatorSentence, Generator
 from SeqGAN.utils import GeneratorPretrainingGenerator, DiscriminatorGenerator, Vocab
 from SeqGAN.rl import Agent, Environment
 from keras.optimizers import Adam
@@ -48,8 +48,8 @@ class Trainer(object):
         self.V = self.vocab.V
         self.agent = Agent(sess, B, self.V, g_E, g_H, g_lr)
         self.g_beta = Agent(sess, B, self.V, g_E, g_H, g_lr)
-        self.discriminator = Discriminator(self.V, d_E, d_H, d_dropout)
-        self.env = Environment(self.discriminator, self.g_data, self.g_beta, n_sample=n_sample)
+        self.discriminator_sentence = DiscriminatorSentence(self.B, self.N, self.V, d_dropout)
+        self.env = Environment(self.discriminator_sentence, self.g_data, self.g_beta, n_sample=n_sample)
 
         self.generator_pre = GeneratorPretraining(self.V, T, N, g_E, g_H)
         self.g_data.model_s = self.generator_pre.model_1
@@ -96,20 +96,20 @@ class Trainer(object):
             vocab=self.vocab)
 
         d_adam = Adam(lr)
-        self.discriminator.compile(d_adam, 'binary_crossentropy')
-        self.discriminator.summary()
+        self.discriminator_sentence.compile(d_adam, 'binary_crossentropy')
+        self.discriminator_sentence.summary()
         print('Discriminator pre-training')
 
-        self.discriminator.fit_generator(
+        self.discriminator_sentence.fit_generator(
             self.d_data,
             steps_per_epoch=None,
             epochs=d_epochs)
-        self.discriminator.save(self.d_pre_path)
+        self.discriminator_sentence.save(self.d_pre_path)
 
     def load_pre_train(self, g_pre_path, d_pre_path):
         self.generator_pre.model.load_weights(g_pre_path)
         self.reflect_pre_train()
-        self.discriminator.load_weights(d_pre_path)
+        self.discriminator_sentence.load_weights(d_pre_path)
 
     def load_pre_train_g(self, g_pre_path):
         self.generator_pre.model.load_weights(g_pre_path)
@@ -134,19 +134,21 @@ class Trainer(object):
         verbose=True,
         head=1):
         d_adam = Adam(self.d_lr)
-        self.discriminator.compile(d_adam, 'binary_crossentropy')
+        self.discriminator_sentence.compile(d_adam, 'binary_crossentropy')
         self.eps = self.init_eps
         for step in range(steps):
             # Generator training
             for _ in range(g_steps):
-                rewards = np.zeros([self.B, self.T])
+                rewards = np.zeros([self.B, self.T]) # for verbose
                 self.agent.reset() # set agent.generator LSTM h, c state to zero vectorss
-                self.env.reset()
+                self.env.reset_paragraph()
                 for t in range(self.T):
-                    state = self.env.get_state() # ex. t = 0, env.t = 1, (B, 1) [[1], [1], [1], ...]
-                    action = self.agent.act(state, epsilon=0.0)  # (B, 1) ex. [[20], [2239], [word id]...] or [[0], [0], [0]...] if is end sentence
-                    next_state, reward, is_episode_end, info = self.env.step(action)
-                    self.agent.generator.update(state, action, reward) # Policy gradient, update generator LSTM h, c, parameters
+                    self.env.reset_sentence()
+                    state = self.env.get_previous_sentence(t) # previous sentence (B, N)
+                    for n in range(self.N):
+                        action = self.agent.act(state, epsilon=0.0)  # a word (B, 1) ex. [[20], [2239], [word id]...] or [[0], [0], [0]...] if is the end of sentence
+                        reward, is_episode_end = self.env.step(action, t, n)
+                        self.agent.generator.update(state, action, reward) # Policy gradient, update generator LSTM h, c, parameters
                     rewards[:, t] = reward.reshape([self.B, ])
                     if is_episode_end:
                         if verbose:
@@ -166,32 +168,32 @@ class Trainer(object):
                     B=self.B,
                     T=self.T,
                     N=self.N,
-                    shuffle=True)
-                self.discriminator.fit_generator(
+                    vocab=self.vocab)
+                self.discriminator_sentence.fit_generator(
                     self.d_data,
                     steps_per_epoch=None,
                     epochs=d_epochs)
 
-            # Update env.g_beta to agent
+            # Reflect the weight of agent to env.g_beta (DDQN)
             self.agent.save(g_weights_path) # agent is responds for Reinforcement Learning, acting on state
             self.g_beta.load(g_weights_path) # g_beta is responds for Rollout Policy (Monte Carol Search..)
 
-            self.discriminator.save(d_weights_path)
+            self.discriminator_sentence.save(d_weights_path)
             self.eps = max(self.eps*(1- float(step) / steps * 4), 1e-4)
 
     def save(self, g_path, d_path):
         self.agent.save(g_path)
-        self.discriminator.save(d_path)
+        self.discriminator_sentence.save(d_path)
 
     def load(self, g_path, d_path):
         self.agent.load(g_path)
         self.g_beta.load(g_path)
-        self.discriminator.load_weights(d_path)
+        self.discriminator_sentence.load_weights(d_path)
 
     def test(self):
         x, y = self.d_data.next()
-        pred = self.discriminator.predict(x)
+        pred = self.discriminator_sentence.predict(x)
         for i in range(self.B):
-            txt = [self.g_data.id2word[id] for id in x[i].tolist()]
+            txt = [self.g_data.vocab.id2word[id] for id in x[i].tolist()]
             label = y[i]
             print('{}, {:.3f}: {}'.format(label, pred[i,0], ' '.join(txt)))

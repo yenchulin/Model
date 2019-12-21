@@ -235,19 +235,27 @@ class Generator():
         self.w_h = np.zeros([self.B, 512])
         self.w_c = np.zeros([self.B, 512])
 
-    def set_rnn_state(self, h, c):
+    def set_rnn_state(self, p_h, p_c, s_h, s_c, w_h, w_c):
         '''
         # Arguments:
             h: np.array, shape = (B,H)
             c: np.array, shape = (B,H)
         '''
-        self.h = h
-        self.c = c
+        self.p_h = p_h
+        self.p_c = p_c
+        self.s_h = s_h
+        self.s_c = s_c
+        self.w_h = w_h
+        self.w_c = w_c
 
     def get_rnn_state(self):
-        return self.h, self.c
+        return self.p_h, self.p_c, self.s_h, self.s_c, self.w_h, self.w_c
 
     def predict_h_s(self, state_sentence):
+        """
+        # Arguments:
+            state_sentence: nparray, dtype = int, shape = (B, N)
+        """
         feed_dict = {
             self.state_sentence: state_sentence,
             self.p_h_in: self.p_h,
@@ -279,16 +287,15 @@ class Generator():
         self.w_c = next_w_c
         return prob
 
-    def update(self, state, action, reward, h=None, c=None, stateful=True):
+    def update(self, state, action, reward):
         '''
         Update weights by Policy Gradient.
         # Arguments:
-            state: np.array, Environment state, shape = (B, 1) or (B, t)
-                if shape is (B, t), state[:, -1] will be used.
-            action: np.array, Agent action, shape = (B, )
+            state: nparray, Environment state (previous sentence), shape = (B, N)
+            action: nparray, Agent action (word), shape = (B, 1)
                 In training, action will be converted to onehot vector.
                 (Onehot shape will be (B, V))
-            reward: np.array, reward by Environment, shape = (B, )
+            reward: nparray, reward by Environment, shape = (B, 1)
 
         # Optional Arguments:
             h: np.array, shape = (B, H), default is None.
@@ -305,28 +312,20 @@ class Generator():
             next_h: (if stateful is True)
             next_c: (if stateful is True)
         '''
-        if h is None:
-            h = self.h
-        if c is None:
-            c = self.c
-        state = state[:, -1].reshape(-1, 1)
-        reward = reward.reshape(-1) # (B, 1) -> (B, ) ex. [0.1, 0.9, 0.5...]
         feed_dict = {
-            self.state_in : state,
-            self.h_in : h,
-            self.c_in : c,
+            self.h_s_input: self.predict_h_s(state),
+            self.w_h_in : self.w_h,
+            self.w_c_in : self.w_c,
             self.action : to_categorical(action, self.V),
-            self.reward : reward}
-        _, loss, next_h, next_c = self.sess.run(
-            [self.minimize, self.loss, self.next_h, self.next_c],
+            self.reward : reward.reshape(-1)
+        }
+        _, loss, next_w_h, next_w_c = self.sess.run(
+            [self.minimize, self.loss, self.next_w_h, self.next_w_h],
             feed_dict)
 
-        if stateful:
-            self.h = next_h
-            self.c = next_c
-            return loss
-        else:
-            return loss, next_h, next_c
+        self.w_h = next_w_h
+        self.w_c = next_w_c
+        return loss
 
     def sampling_word(self, prob):
         '''
@@ -419,7 +418,7 @@ def DisciriminatorParagraph(B, T, N, V, dropout=0.1):
             input: sentences, shape = (B, T, N)
             output: probability (smoothness vlllue) of true sentence or not, shape = (B, T, 1)
     '''
-    input = Input(shape=(None,), dtype='int32', name='Input')  # (B, T, N)
+    input = Input(shape=(T, N), dtype='int32', name='Input')  # (B, T, N)
     out = Embedding(V, 512, mask_zero=True, name='WordEmbedding')(input)  # (B, T, N, 512)
     out = Lambda(lambda x: tf.reduce_mean(x, axis=2), name="SentenceEmbedding")(out) # average word embeddings (B, T, 512)
     out = LSTM(512, return_sequences=True)(out) # (B, T, 512)
@@ -430,12 +429,11 @@ def DisciriminatorParagraph(B, T, N, V, dropout=0.1):
     discriminator = Model(input, out)
     return discriminator
 
-def DiscriminatorSentence(B, T, N, V, dropout=0.1):
+def DiscriminatorSentence(B, N, V, dropout=0.1):
     '''
     Sentence Disciriminator model.
     # Arguments:
         B: int, Batch size
-        T: int, Max sentences in a paragraph
         N: int, Max words in a sentence
         V: int, Vocabrary size
         dropout: float
@@ -444,12 +442,12 @@ def DiscriminatorSentence(B, T, N, V, dropout=0.1):
             input: sentences, shape = (B, T, N)
             output: probability (smoothness vlllue) of true sentence or not, shape = (B, T, 1)
     '''
-    input = Input(shape=(None,), dtype='int32', name='Input')  # (B, T, N)
-    out = Embedding(V, 512, mask_zero=True, name='WordEmbedding')(input)  # (B, T, N, 512)
-    out = LSTM(512)(out) # (B, T, 512)
-    out = Highway(out, num_layers=1) # (B, T, 512)
-    out = Dropout(dropout, name='Dropout')(out) # (B, T, 512)
-    out = Dense(1, activation='sigmoid', name='FC')(out) # (B, T, 1)
+    input = Input(shape=(None,), dtype='int32', name='Input')  # (B, N)
+    out = Embedding(V, 512, mask_zero=True, name='WordEmbedding')(input)  # (B, N, 512)
+    out = LSTM(512)(out) # (B, 512)
+    out = Highway(out, num_layers=1) # (B, 512)
+    out = Dropout(dropout, name='Dropout')(out) # (B, 512)
+    out = Dense(1, activation='sigmoid', name='FC')(out) # (B, 1)
 
     discriminator = Model(input, out)
     return discriminator
