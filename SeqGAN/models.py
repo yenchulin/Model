@@ -9,6 +9,7 @@ from keras.layers.wrappers import TimeDistributed
 from keras.utils import to_categorical
 import tensorflow as tf
 import pickle
+from tqdm import trange
 
 def visualAttention(x):
     '''
@@ -113,6 +114,27 @@ class GeneratorPretraining():
         out = self.model_2([h_w_pre, out])
         out = self.model_3(out)
         self.model = Model(inputs=[data, h_s_pre, h_w_pre], outputs=out)
+
+    def train_on_batch(self, data, epochs):
+        '''
+        # Arguments:
+            data: Seqgan.utils.DiscriminatorGenerator
+            epochs: int, number of epochs to run
+        # Note: Have to compile the model first.
+        '''
+        for epoch in range(epochs):
+            with trange(len(data), ascii=True) as num_batch: # Total number of steps (number of batches = num_samples / batch_size)
+                for _ in num_batch: 
+                    num_batch.set_description("Epoch %i/%i" % (epoch, epochs))
+                    
+                    sample = data.next()
+                    loss = self.model.train_on_batch(
+                        x=sample[0],
+                        y=sample[1],
+                        sample_weight=sample[2]
+                    )
+
+                    num_batch.set_postfix(loss=loss)
 
 class Generator():
     'Create Generator, which generate a next word.'
@@ -429,28 +451,47 @@ def DisciriminatorParagraph(B, T, N, V, dropout=0.1):
     discriminator = Model(input, out)
     return discriminator
 
-def DiscriminatorSentence(B, N, V, dropout=0.1):
+class DiscriminatorSentence():
     '''
     Sentence Disciriminator model.
     # Arguments:
-        B: int, Batch size
-        N: int, Max words in a sentence
         V: int, Vocabrary size
         dropout: float
-    # Returns:
-        discriminator: keras model
-            input: sentences, shape = (B, T, N)
-            output: probability (smoothness vlllue) of true sentence or not, shape = (B, T, 1)
+    # Parameters:
+        model: the sentence discriminator model
     '''
-    input = Input(shape=(None,), dtype='int32', name='Input')  # (B, N)
-    out = Embedding(V, 512, mask_zero=True, name='WordEmbedding')(input)  # (B, N, 512)
-    out = LSTM(512)(out) # (B, 512)
-    out = Highway(out, num_layers=1) # (B, 512)
-    out = Dropout(dropout, name='Dropout')(out) # (B, 512)
-    out = Dense(1, activation='sigmoid', name='FC')(out) # (B, 1)
+    def __init__(self, V, dropout=0.1):
+        self.__build_graph__(V, dropout)
+    
+    def __build_graph__(self, V, dropout):
+        input = Input(shape=(None,), dtype='int32', name='Input')  # (B, N)
+        out = Embedding(V, 512, mask_zero=True, name='WordEmbedding')(input)  # (B, N, 512)
+        out = LSTM(512)(out) # (B, 512)
+        out = Highway(out, num_layers=1) # (B, 512)
+        out = Dropout(dropout, name='Dropout')(out) # (B, 512)
+        out = Dense(1, activation='sigmoid', name='FC')(out) # (B, 1)
 
-    discriminator = Model(input, out)
-    return discriminator
+        self.model = Model(input, out)
+
+    def train_on_batch(self, data, epochs):
+        '''
+        # Arguments:
+            data: Seqgan.utils.DiscriminatorGenerator
+            epochs: int, number of epochs to run
+        # Note: Have to compile the model first.
+        '''
+        for epoch in range(epochs):
+            with trange(len(data), ascii=True) as num_batch: # Total number of steps (number of batches = num_samples / batch_size)
+                for _ in num_batch:
+                    num_batch.set_description("Epoch %i/%i" % (epoch, epochs))
+
+                    sample = data.next()
+                    loss = self.model.train_on_batch(
+                        x=sample[0],
+                        y=sample[1]
+                    )
+
+                    num_batch.set_postfix(loss=loss)
 
 def Discriminator(V, E, H=64, dropout=0.1):
     '''

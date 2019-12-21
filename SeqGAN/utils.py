@@ -441,7 +441,7 @@ class DiscriminatorGenerator(Sequence):
     def next(self):
         if self.idx >= self.len:
             self.reset()
-            raise StopIteration
+
         X, Y = self.__getitem__(self.idx)
         self.idx += 1
         return (X, Y)

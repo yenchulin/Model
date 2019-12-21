@@ -2,7 +2,6 @@ from SeqGAN.models import GeneratorPretraining, DiscriminatorSentence, Generator
 from SeqGAN.utils import GeneratorPretrainingGenerator, DiscriminatorGenerator, Vocab
 from SeqGAN.rl import Agent, Environment
 from keras.optimizers import Adam
-from tqdm import trange
 import os
 import numpy as np
 import tensorflow as tf
@@ -48,8 +47,8 @@ class Trainer(object):
         self.V = self.vocab.V
         self.agent = Agent(sess, B, self.V, g_E, g_H, g_lr)
         self.g_beta = Agent(sess, B, self.V, g_E, g_H, g_lr)
-        self.discriminator_sentence = DiscriminatorSentence(self.B, self.N, self.V, d_dropout)
-        self.env = Environment(self.discriminator_sentence, self.g_data, self.g_beta, n_sample=n_sample)
+        self.discriminator_sentence = DiscriminatorSentence(self.V, d_dropout)
+        self.env = Environment(self.discriminator_sentence.model, self.g_data, self.g_beta, n_sample=n_sample)
 
         self.generator_pre = GeneratorPretraining(self.V, T, N, g_E, g_H)
         self.g_data.model_s = self.generator_pre.model_1
@@ -68,16 +67,7 @@ class Trainer(object):
         print('Generator pre-training')
         self.generator_pre.model.summary()
         
-        # Pretrain
-        for _ in trange(g_epochs, ascii=True):
-            for _ in range(len(self.g_data)): # Total number of steps (number of batches = num_samples / batch_size)
-                sample = self.g_data.next()
-                self.generator_pre.model.train_on_batch(
-                    x=sample[0],
-                    y=sample[1],
-                    sample_weight=sample[2]
-                )
-
+        self.generator_pre.train_on_batch(self.g_data, g_epochs)
         self.generator_pre.model.save_weights(self.g_pre_path)
         self.reflect_pre_train()
 
@@ -96,20 +86,17 @@ class Trainer(object):
             vocab=self.vocab)
 
         d_adam = Adam(lr)
-        self.discriminator_sentence.compile(d_adam, 'binary_crossentropy')
-        self.discriminator_sentence.summary()
+        self.discriminator_sentence.model.compile(d_adam, 'binary_crossentropy')
+        self.discriminator_sentence.model.summary()
         print('Discriminator pre-training')
 
-        self.discriminator_sentence.fit_generator(
-            self.d_data,
-            steps_per_epoch=None,
-            epochs=d_epochs)
-        self.discriminator_sentence.save(self.d_pre_path)
+        self.discriminator_sentence.train_on_batch(self.d_data, d_epochs)
+        self.discriminator_sentence.model.save(self.d_pre_path)
 
     def load_pre_train(self, g_pre_path, d_pre_path):
         self.generator_pre.model.load_weights(g_pre_path)
         self.reflect_pre_train()
-        self.discriminator_sentence.load_weights(d_pre_path)
+        self.discriminator_sentence.model.load_weights(d_pre_path)
 
     def load_pre_train_g(self, g_pre_path):
         self.generator_pre.model.load_weights(g_pre_path)
@@ -134,7 +121,7 @@ class Trainer(object):
         verbose=True,
         head=1):
         d_adam = Adam(self.d_lr)
-        self.discriminator_sentence.compile(d_adam, 'binary_crossentropy')
+        self.discriminator_sentence.model.compile(d_adam, 'binary_crossentropy')
         self.eps = self.init_eps
         for step in range(steps):
             # Generator training
@@ -169,30 +156,27 @@ class Trainer(object):
                     T=self.T,
                     N=self.N,
                     vocab=self.vocab)
-                self.discriminator_sentence.fit_generator(
-                    self.d_data,
-                    steps_per_epoch=None,
-                    epochs=d_epochs)
+                self.discriminator_sentence.train_on_batch(self.d_data, d_epochs)
 
             # Reflect the weight of agent to env.g_beta (DDQN)
             self.agent.save(g_weights_path) # agent is responds for Reinforcement Learning, acting on state
             self.g_beta.load(g_weights_path) # g_beta is responds for Rollout Policy (Monte Carol Search..)
 
-            self.discriminator_sentence.save(d_weights_path)
+            self.discriminator_sentence.model.save(d_weights_path)
             self.eps = max(self.eps*(1- float(step) / steps * 4), 1e-4)
 
     def save(self, g_path, d_path):
         self.agent.save(g_path)
-        self.discriminator_sentence.save(d_path)
+        self.discriminator_sentence.model.save(d_path)
 
     def load(self, g_path, d_path):
         self.agent.load(g_path)
         self.g_beta.load(g_path)
-        self.discriminator_sentence.load_weights(d_path)
+        self.discriminator_sentence.model.load_weights(d_path)
 
     def test(self):
         x, y = self.d_data.next()
-        pred = self.discriminator_sentence.predict(x)
+        pred = self.discriminator_sentence.model.predict(x)
         for i in range(self.B):
             txt = [self.g_data.vocab.id2word[id] for id in x[i].tolist()]
             label = y[i]
