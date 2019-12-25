@@ -2,9 +2,22 @@ import numpy as np
 import random
 import linecache
 import re
+import matplotlib.pyplot as plt
 from nltk.tokenize import sent_tokenize
 from keras.utils import Sequence
 from keras.utils.np_utils import to_categorical
+
+def plotLineChart(x, y, xlabelName, ylabelName, figname):
+    plt.figure(figsize=(13,7))
+    
+    # create the line plot
+    plt.plot(x, y)
+    plt.xticks(x)
+    plt.xlabel(xlabelName)
+    plt.ylabel(ylabelName)
+    
+    # save the plot
+    plt.savefig(figname)
 
 class Vocab:
     PAD = 0

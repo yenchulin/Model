@@ -126,14 +126,13 @@ class Environment(object):
             n: current time step when generating the sentence
         # Returns:
             reward: nparray, dtype=float, shape = (B, 1)
-            is_episode_end: bool
         '''
         is_episode_end = n + 1 >= self.N
         self._append_word(action)
         if is_episode_end:
             self._append_sentence()
         reward = self.Q(n, is_episode_end, self.n_sample) # calculate the reward of the appended action
-        return reward, is_episode_end
+        return reward
 
     def render(self, head=1):
         for i in range(head):

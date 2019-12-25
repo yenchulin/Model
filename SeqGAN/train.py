@@ -1,5 +1,5 @@
 from SeqGAN.models import GeneratorPretraining, DiscriminatorSentence, Generator
-from SeqGAN.utils import GeneratorPretrainingGenerator, DiscriminatorGenerator, Vocab
+from SeqGAN.utils import GeneratorPretrainingGenerator, DiscriminatorGenerator, Vocab, plotLineChart
 from SeqGAN.rl import Agent, Environment
 from keras.optimizers import Adam
 import os
@@ -118,30 +118,30 @@ class Trainer(object):
     def train(self, steps=10, g_steps=1, d_steps=1, d_epochs=1,
         g_weights_path='data/save/generator.pkl',
         d_weights_path='data/save/discriminator.hdf5',
-        verbose=True,
         head=1):
         d_adam = Adam(self.d_lr)
         self.discriminator_sentence.model.compile(d_adam, 'binary_crossentropy')
         self.eps = self.init_eps
+
+        print("Adversarial training")
+        step_loss_d = []
+        step_loss_g = []
+
         for step in range(steps):
             # Generator training
             for _ in range(g_steps):
-                rewards = np.zeros([self.B, self.T]) # for verbose
                 self.agent.reset() # set agent.generator LSTM h, c state to zero vectorss
                 self.env.reset_paragraph()
                 for t in range(self.T):
                     self.env.reset_sentence()
                     state = self.env.get_previous_sentence(t) # previous sentence (B, N)
+                    g_loss = 0
                     for n in range(self.N):
                         action = self.agent.act(state, epsilon=0.0)  # a word (B, 1) ex. [[20], [2239], [word id]...] or [[0], [0], [0]...] if is the end of sentence
-                        reward, is_episode_end = self.env.step(action, t, n)
-                        self.agent.generator.update(state, action, reward) # Policy gradient, update generator LSTM h, c, parameters
-                    rewards[:, t] = reward.reshape([self.B, ])
-                    if is_episode_end:
-                        if verbose:
-                            print('Reward: {:.3f}, Episode end'.format(np.average(rewards)))
-                            self.env.render(head=head)
-                        break
+                        reward = self.env.step(action, t, n)
+                        g_loss += self.agent.generator.update(state, action, reward) / self.N # Policy gradient, update generator LSTM h, c, parameters, calulate loss for tha whole sentence
+                    step_loss_g.append(g_loss)
+
             # Discriminator training
             for _ in range(d_steps):
                 self.agent.generator.generate_samples(
@@ -156,7 +156,8 @@ class Trainer(object):
                     T=self.T,
                     N=self.N,
                     vocab=self.vocab)
-                self.discriminator_sentence.train_on_batch(self.d_data, d_epochs)
+                d_epoch_loss = self.discriminator_sentence.train_on_batch(self.d_data, d_epochs) # shape = (d_epochs, )
+                step_loss_d.append(d_epoch_loss)
 
             # Reflect the weight of agent to env.g_beta (DDQN)
             self.agent.save(g_weights_path) # agent is responds for Reinforcement Learning, acting on state
@@ -164,6 +165,22 @@ class Trainer(object):
 
             self.discriminator_sentence.model.save(d_weights_path)
             self.eps = max(self.eps*(1- float(step) / steps * 4), 1e-4)
+        
+        # Plot generator loss (a loss for each sentence)
+        step_loss_g = np.array(step_loss_g)
+        xlabelName, ylabelName = "Steps", "G Loss"
+        top = os.getcwd()
+        images = os.path.join(top, 'data', 'save')
+        figname = os.path.join(images, 'generator_loss.png')
+        plotLineChart(range(1, steps * g_steps * self.T + 1), step_loss_g, xlabelName, ylabelName, figname)
+
+        # Plot discriminator loss
+        step_loss_d = np.array(step_loss_d)
+        xlabelName, ylabelName = "Steps", "D Loss"
+        top = os.getcwd()
+        images = os.path.join(top, 'data', 'save')
+        figname = os.path.join(images, 'discriminator_loss.png')
+        plotLineChart(range(1, steps * d_steps + 1), step_loss_d.reshape(steps * d_steps,), xlabelName, ylabelName, figname)
 
     def save(self, g_path, d_path):
         self.agent.save(g_path)

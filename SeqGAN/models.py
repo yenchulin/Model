@@ -120,21 +120,27 @@ class GeneratorPretraining():
         # Arguments:
             data: Seqgan.utils.DiscriminatorGenerator
             epochs: int, number of epochs to run
+        # Returns:
+            losses: nparray, loss of every epoch, shape = (epochs, )
         # Note: Have to compile the model first.
         '''
+        losses = []
         for epoch in range(epochs):
             with trange(len(data), ascii=True) as num_batch: # Total number of steps (number of batches = num_samples / batch_size)
+                num_batch.set_description("Epoch %i/%i" % (epoch+1, epochs))
+                loss = 0
                 for _ in num_batch: 
-                    num_batch.set_description("Epoch %i/%i" % (epoch, epochs))
-                    
                     sample = data.next()
-                    loss = self.model.train_on_batch(
+                    loss += self.model.train_on_batch(
                         x=sample[0],
                         y=sample[1],
                         sample_weight=sample[2]
-                    )
-
+                    ) / len(data) # average the loss in same batch
                     num_batch.set_postfix(loss=loss)
+            
+            losses.append(loss)
+        losses = np.array(losses, dtype=np.float)
+        return losses
 
 class Generator():
     'Create Generator, which generate a next word.'
@@ -330,7 +336,7 @@ class Generator():
                 else, return loss, next_h, next_c without updating states.
 
         # Returns:
-            loss: np.array, shape = (B, )
+            loss: np.array, shape = (B, ) -> float, average the loss of every sample in a batch
             next_h: (if stateful is True)
             next_c: (if stateful is True)
         '''
@@ -347,7 +353,7 @@ class Generator():
 
         self.w_h = next_w_h
         self.w_c = next_w_c
-        return loss
+        return np.mean(loss) # a float value
 
     def sampling_word(self, prob):
         '''
@@ -478,20 +484,26 @@ class DiscriminatorSentence():
         # Arguments:
             data: Seqgan.utils.DiscriminatorGenerator
             epochs: int, number of epochs to run
+        # Returns:
+            losses: nparray, loss of every epoch, shape = (epochs, )
         # Note: Have to compile the model first.
         '''
+        losses = []
         for epoch in range(epochs):
             with trange(len(data), ascii=True) as num_batch: # Total number of steps (number of batches = num_samples / batch_size)
+                num_batch.set_description("Epoch %i/%i" % (epoch+1, epochs))
+                loss = 0
                 for _ in num_batch:
-                    num_batch.set_description("Epoch %i/%i" % (epoch, epochs))
-
                     sample = data.next()
-                    loss = self.model.train_on_batch(
+                    loss += self.model.train_on_batch(
                         x=sample[0],
                         y=sample[1]
-                    )
-
+                    ) / len(data) # average the loss in same batch
                     num_batch.set_postfix(loss=loss)
+
+            losses.append(loss)
+        losses = np.array(losses, dtype=np.float)
+        return losses
 
 def Discriminator(V, E, H=64, dropout=0.1):
     '''
