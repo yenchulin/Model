@@ -144,10 +144,11 @@ class GeneratorPretraining():
 
 class Generator():
     'Create Generator, which generate a next word.'
-    def __init__(self, sess, B, V, E, H, lr=1e-3):
+    def __init__(self, sess, B, N, V, E, H, lr=1e-3):
         '''
         # Arguments:
             B: int, Batch size
+            N: int, Max words in a sentence
             V: int, Vocabrary size
             E: int, Embedding size
             H: int, LSTM hidden size
@@ -156,7 +157,7 @@ class Generator():
         '''
         self.sess = sess
         self.B = B
-        self.N = 30
+        self.N = N
         self.V = V
         self.E = E
         self.H = H

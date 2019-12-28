@@ -15,7 +15,7 @@ class TestDiscriminatorSentenceGenerator(unittest.TestCase):
             path_pos=path_pos,
             path_neg=path_neg,
             B=8,
-            T=5,
+            T=3,
             N=20,
             vocab=vocab,
             shuffle=False)
@@ -26,36 +26,29 @@ class TestDiscriminatorSentenceGenerator(unittest.TestCase):
         self.assertEqual(y.shape, (gen.B, 1), msg="y shape test")
 
         """
-        A large building with bars on the windows in front of it. (12 words)
-        There is people walking in front of the building. (9 words)
-        There is a street in front of the building with many cars on it. (14 words)
+        # 0th sentence: (32 words)
+        i do not play it but i was pleased to know that this does not get overheated like the other one and it does not sound super loud like the other one.
         """
-        expected_text = [
-            ['a', 'large', 'building', 'with', 'bars', 'on', 'the', 'windows', 'in', 'front', 'of', 'it', '</S>', '<PAD>', '<PAD>', '<PAD>','<PAD>', '<PAD>', '<PAD>', '<PAD>'], 
-            ['there', 'is', 'people', 'walking', 'in', 'front', 'of', 'the', 'building', '</S>', '<PAD>', '<PAD>', '<PAD>','<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>'],
-            ['there', 'is', 'a', 'street', 'in', 'front', 'of', 'the', 'building', 'with', 'many', 'cars', 'on', 'it', '</S>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>'],
-            ['<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>','<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>'],
-            ['<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>','<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>']
-        ] 
+        expected_text = ['i', 'do', 'not', 'play', 'it', 'but', 'i', 'was', 'pleased', 'to', 'know', 'that', 'this', 'does', 'not', 'get', 'overheated', 'like', 'the', '</S>']
 
-        actual_text = [vocab.id2word[word] for word in x[0]]
-        self.sub_test(actual_text, expected_text, msg='x pos text test')
-        self.sub_test(y[0][0], [1], msg='true data')
+        actual_text = [vocab.id2word[_id] for _id in x[0]]
+        self.sub_test(actual_text, expected_text, msg='x positive text test - 1 (original text > 20 words)')
+        self.sub_test(y[0], [1], msg='true data')
+
+        """
+        # 2th sentence: (7 words)
+        ps4 pro is a total entertainment machine!
+        """
+        expected_text = ['ps4', 'pro', 'is', 'a', 'total', 'entertainment', 'machine', '</S>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '<PAD>']
+
+        actual_text = [vocab.id2word[_id] for _id in x[2]]
+        self.sub_test(actual_text, expected_text, msg='x positive text test - 2 (original text < 20 words)')
+        self.sub_test(y[2], [1], msg='true data')
 
 
         x, y = gen.__getitem__(idx=(gen.n_data_pos // gen.B + 1))
-        expected_text = [
-            ['underneath', 'partially', 'this', '<PAD>', '<PAD>', 'a', 'and', 'and', '<PAD>', 'white', 'wears', '<PAD>', 'in', '<PAD>', 'black', '<PAD>', 'wearing', 'window', 'fence', 'and'],
-            ['are', '</S>', 'climbing', 'baby', '<PAD>', 'bathing', '<PAD>', '<PAD>', '<PAD>', 'his', 'a', 'are', '<PAD>', 'a', 'it', '<PAD>', 'rail', 'the', '<PAD>', 'exposed'],
-            ['white', 'dog', '<PAD>', '<PAD>', 'red', '<PAD>', 'above', 'shirt', '<PAD>', '<PAD>', '<PAD>', '<PAD>', 'of', 'sink', '<PAD>', '<PAD>', 'been', 'with', 'in', 'thin'],
-            ['<PAD>', '<PAD>', '<PAD>', 'inside', 'tennis', 'which', '<PAD>', '<PAD>', 'a', '<PAD>', 'yellow', 'with', 'yellow', '<PAD>', 'is', 'the', '<PAD>', 'tub', 'two', 'a'],
-            ['<PAD>', '<PAD>', 'in', '<PAD>', 'many', 'there', 'hair', 'right', '<PAD>', 'is', '<PAD>', 'in', '<PAD>', '<PAD>', '<PAD>', 'beside', '<PAD>', 'and', 'at', 'appears']
-        ]
+        expected_text = ['possible', '<PAD>', 'has', 'i', 'but', '4k', 'will', '<PAD>', 'only', '<PAD>', 'i', 'no', 'not', 'it', '</S>', '<PAD>', '<PAD>', '<PAD>', '<PAD>', '</S>']
 
-        actual_text = []
-        for sentence_ids in x[0]:
-            sentence = [vocab.id2word[_id] for _id in sentence_ids]
-            actual_text.append(sentence)
-        
+        actual_text = [vocab.id2word[_id] for _id in x[0]]
         self.sub_test(actual_text, expected_text, msg='x neg text test')
-        self.sub_test(y[0][0], [0], 'generated data')
+        self.sub_test(y[0], [0], 'generated data')

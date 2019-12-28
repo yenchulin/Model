@@ -8,11 +8,12 @@ class Agent(object):
     On each step, Agent act on state.
     Then Environment return next state, reward, and so on.
     '''
-    def __init__(self, sess, B, V, E, H, lr=1e-3):
+    def __init__(self, sess, B, N, V, E, H, lr=1e-3):
         '''
         # Arguments:
             sess: tf.Session
             B: int, batch_size
+            N: int, Max words in a sentence
             V: int, Vocabrary size
             E: int, Embedding size
             H: int, LSTM hidden size
@@ -22,12 +23,13 @@ class Agent(object):
         self.sess = sess
         self.num_actions = V
         self.B = B
+        self.N = N
         self.V = V
         self.E = E
         self.H = H
         self.lr = lr
         self.eps = 0.1
-        self.generator = Generator(sess, B, V, E, H, lr)
+        self.generator = Generator(sess, B, N, V, E, H, lr)
 
     def act(self, state, epsilon=0, deterministic=False):
         '''

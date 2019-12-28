@@ -8,7 +8,7 @@ When changing new dataset to run,
 it is required to change T and generate_samples
 """
 B = 32 # batch size
-T = 5 # Max sentences in a document
+T = 3 # Max sentences in a document
 N = 30 # Max words in a sentence
 g_E = 64 # Generator embedding size
 g_H = 64 # Generator LSTM hidden size
@@ -56,7 +56,7 @@ trainer.load_pre_train(g_pre_weights_path, d_pre_weights_path)
 trainer.reflect_pre_train()
 
 
-trainer.train(steps=1, g_steps=1, head=10)
+trainer.train(steps=1, g_steps=1, d_steps=1, head=10)
 
 
 

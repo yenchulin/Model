@@ -177,7 +177,7 @@ def reshape_sentence(data_row, max_num_words, BOS=False, EOS=False):
     # Returns:
         sentence: a sentence, list, shape = (max_num_words, ).
     """
-    sentence = data_row
+    sentence = list(data_row)
     sentence_len = len(sentence)
     if BOS:
         sentence_len += 1
@@ -218,6 +218,7 @@ def reshape_paragraph(data_row, max_num_sentences, max_num_words, BOS=False, EOS
     """
     paragraph = []
     for sentence in data_row:
+        sentence = list(sentence)
         sentence_len = len(sentence)
         if BOS:
             sentence_len += 1

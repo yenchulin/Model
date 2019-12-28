@@ -46,8 +46,8 @@ class Trainer(object):
                 N=N,
                 vocab=self.vocab)
         self.V = self.vocab.V
-        self.agent = Agent(sess, B, self.V, g_E, g_H, g_lr)
-        self.g_beta = Agent(sess, B, self.V, g_E, g_H, g_lr)
+        self.agent = Agent(sess, B, self.N, self.V, g_E, g_H, g_lr)
+        self.g_beta = Agent(sess, B, self.N, self.V, g_E, g_H, g_lr)
         self.discriminator_sentence = DiscriminatorSentence(self.V, d_dropout)
         self.env = Environment(self.discriminator_sentence.model, self.g_data, self.g_beta, n_sample=n_sample)
 
@@ -209,6 +209,6 @@ class Trainer(object):
         x, y = self.d_data.next()
         pred = self.discriminator_sentence.model.predict(x)
         for i in range(self.B):
-            txt = [self.g_data.vocab.id2word[id] for id in x[i].tolist()]
+            txt = [self.vocab.id2word[id] for id in x[i].tolist()]
             label = y[i]
             print('{}, {:.3f}: {}'.format(label, pred[i,0], ' '.join(txt)))
