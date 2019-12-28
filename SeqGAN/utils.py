@@ -75,6 +75,26 @@ class Vocab:
             self.raw_vocab[word] = count
         self.V = len(self.word2id)
 
+def load_sentence_data(file_path):
+    """
+    Load string data that each line represents a sample (sentence).
+    Every sample has puntuations.
+    Length don't have to be fixed.
+    # Arguments:
+        file_path: str
+    # Returns:
+        n_data: int, number of rows (sample) in file
+        data: list, shape = (n_data, number of words in each sentence)
+    """
+    data = []
+    with open(file_path, 'r', encoding='utf-8') as f:
+        for line in f:
+            sentence = re.sub("[^a-zA-Z0-9]", " ", line)
+            words = sentence.strip().split() # list of str
+            data.append(words)
+    
+    return len(data), data
+
 def load_data(file_path):
     """
     Load string data that each line represents a sample (paragraph).
@@ -121,6 +141,16 @@ def load_generated_data(file_path, T, N):
     
     return len(data), data
 
+def get_sentence_ids(data_row, vocab):
+    '''
+    # Arguments:
+        data_row: a sample from data, list, shape = (number of words in each sentence, )
+        vocab: SeqGAN.utils.Vocab used for lookup word ids
+    # Returns:
+        sentence: list of int
+    '''
+    return [vocab.word2id.get(word, Vocab.UNK) for word in data_row]
+
 def get_paragraph_ids(data_row, vocab):
     '''
     # Arguments:
@@ -128,15 +158,52 @@ def get_paragraph_ids(data_row, vocab):
         vocab: SeqGAN.utils.Vocab used for lookup word ids
     # Returns:
         paragraph: list of int, 
-                data[i] means a paragraph, (i=1)
-                data[i][j] means a sentence,
-                data[i][j][k] means a word.
+                data[i] means a sentence, (i=1)
+                data[i][j] means a word.
     '''
     paragraph = []
     for sentence in data_row:
         ids = [vocab.word2id.get(word, Vocab.UNK) for word in sentence]
         paragraph.append(ids) # ex. [[BOS(1), 8, 10, 6, 3, EOS(2)], [1, 5, 13, 9, 7, 25, 2]]
     return paragraph
+
+def reshape_sentence(data_row, max_num_words, BOS=False, EOS=False):
+    """
+    # Arguments:
+        data_row: a sample from data, list, shape = (number of words in each sentence, )
+        max_num_words: int.
+        BOS (optional): the BOS token, default is False. If False, BOS will not be added at the begin of the sentence.
+        EOS (optional): the EOS token, default is False. If False, EOS will not be added at the end of the sentence.
+    # Returns:
+        sentence: a sentence, list, shape = (max_num_words, ).
+    """
+    sentence = data_row
+    sentence_len = len(sentence)
+    if BOS:
+        sentence_len += 1
+    if EOS:
+        sentence_len += 1
+    
+    # Check if need pad or drop
+    diff = max_num_words - sentence_len
+    if diff > 0: # pad
+        if BOS:
+            sentence.insert(0, Vocab.BOS_TOKEN)
+        if EOS:
+            sentence.append(Vocab.EOS_TOKEN)
+        sentence.extend([Vocab.PAD_TOKEN] * diff)
+    elif diff < 0: # drop
+        sentence = sentence[:diff]
+        if BOS:
+            sentence.insert(0, Vocab.BOS_TOKEN)
+        if EOS:
+            sentence.append(Vocab.EOS_TOKEN)
+    else: # no need to drop or pad
+        if BOS:
+            sentence.insert(0, Vocab.BOS_TOKEN)
+        if EOS:
+            sentence.append(Vocab.EOS_TOKEN)
+    return sentence
 
 def reshape_paragraph(data_row, max_num_sentences, max_num_words, BOS=False, EOS=False):
     """
@@ -337,6 +404,102 @@ class GeneratorPretrainingGenerator(Sequence):
         if self.shuffle:
             self.shuffled_indices = np.arange(self.n_data)
             random.shuffle(self.shuffled_indices)
+
+    def on_epoch_end(self):
+        self.reset()
+        pass
+
+
+class DiscriminatorSentenceGenerator(Sequence):
+    '''
+    Generate Sentence Discriminator data.
+    # Arguments
+        path_pos: str, path to true data
+        path_neg: str, path to generated data
+        B: int, batch size
+        T: the max number of sentences in a document (review)
+        N: the max number of words in a sentence
+        vocab: Vocab
+        shuffle (optional): bool
+
+    # Params
+        n_data: the number of rows of data
+    '''
+    def __init__(self, path_pos, path_neg, B, T, N, vocab, shuffle=True):
+        self.B = B
+        self.T = T
+        self.N = N
+        
+        self.vocab = vocab
+        self.n_data_pos, self.data_pos = load_sentence_data(path_pos)
+        self.n_data_neg, self.data_neg = load_generated_data(path_neg, self.T, self.N)
+        self.n_data = self.n_data_pos + self.n_data_neg
+        self.shuffle = shuffle
+        self.idx = 0
+        self.len = self.__len__()
+        self.reset()
+
+    def __len__(self):
+        return self.n_data // self.B
+
+    def __getitem__(self, idx):
+        '''
+        Get generator pretraining data batch.
+        # Arguments:
+            idx: int, index of batch
+        # Returns:
+            X: numpy.array, shape = (B, N)
+            Y: numpy.array, shape = (B, 1)
+                labels indicate whether sentences are true data or generated data.
+                if true data, y = 1. Else if generated data, y = 0.
+        '''
+        X, Y = [], []
+        start = idx * self.B
+        end = (idx + 1) * self.B
+
+        for i in range(start, end):
+            idx = self.indicies[i]
+            is_pos = 1
+            if idx < 0:
+                is_pos = 0
+                idx = -1 * idx
+            idx = idx - 1
+
+            if is_pos == 1:
+                sentence = self.data_pos[idx] # a sample from data, list, shape = (number of words in each sentence, )
+                sentence_x = reshape_sentence(sentence, self.N, EOS=True) # (N, )
+                sentence_ids_x = get_sentence_ids(sentence_x, self.vocab)
+                X.append(sentence_ids_x)
+                Y.append([is_pos])
+            elif is_pos == 0:
+                paragraph = self.data_neg[idx] # a sample from data, list, shape = (number of sentences in each row, number of words in each sentence)
+                paragraph_ids_x = get_paragraph_ids(paragraph, self.vocab) # (T, N)
+                for sentence_ids_x in paragraph_ids_x:
+                    X.append(sentence_ids_x)
+                    Y.append([is_pos])
+
+        X = np.array(X, dtype=np.int32)
+        Y = np.array(Y, dtype=np.int32)
+        return (X, Y)
+
+    def __iter__(self):
+        return self
+
+    def next(self):
+        if self.idx >= self.len:
+            self.reset()
+
+        X, Y = self.__getitem__(self.idx)
+        self.idx += 1
+        return (X, Y)
+
+    def reset(self):
+        self.idx = 0
+        pos_indices = np.arange(start=1, stop=self.n_data_pos+1)
+        neg_indices = -1 * np.arange(start=1, stop=self.n_data_neg+1)
+        self.indicies = np.concatenate([pos_indices, neg_indices])
+        if self.shuffle:
+            random.shuffle(self.indicies)
 
     def on_epoch_end(self):
         self.reset()

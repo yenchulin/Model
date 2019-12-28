@@ -1,5 +1,5 @@
 from SeqGAN.models import GeneratorPretraining, DiscriminatorSentence, Generator
-from SeqGAN.utils import GeneratorPretrainingGenerator, DiscriminatorGenerator, Vocab, plotLineChart
+from SeqGAN.utils import GeneratorPretrainingGenerator, DiscriminatorSentenceGenerator, Vocab, plotLineChart
 from SeqGAN.rl import Agent, Environment
 from keras.optimizers import Adam
 import os
@@ -28,6 +28,7 @@ class Trainer(object):
         self.init_eps = init_eps
         self.top = os.getcwd()
         self.path_pos = os.path.join(self.top, 'data', 'kokoro_parsed.txt')
+        self.path_pos_sentence = os.path.join(self.top, 'data', 'kokoro_parsed_sentence.txt')
         self.path_neg = os.path.join(self.top, 'data', 'save', 'generated_sentences.txt')
         self.vocab = Vocab(self.path_pos)
         self.g_data = GeneratorPretrainingGenerator(
@@ -37,8 +38,8 @@ class Trainer(object):
             N=N,
             vocab=self.vocab)
         if os.path.exists(self.path_neg):
-            self.d_data = DiscriminatorGenerator(
-                path_pos=self.path_pos,
+            self.d_data = DiscriminatorSentenceGenerator(
+                path_pos=self.path_pos_sentence,
                 path_neg=self.path_neg,
                 B=B,
                 T=T,
@@ -77,8 +78,8 @@ class Trainer(object):
         print('Start Generating sentences')
         self.agent.generator.generate_samples(self.T, self.g_data, self.generate_samples, self.path_neg) # agent.generator weights are set after pretraining generator
 
-        self.d_data = DiscriminatorGenerator(
-            path_pos=self.path_pos,
+        self.d_data = DiscriminatorSentenceGenerator(
+            path_pos=self.path_pos_sentence,
             path_neg=self.path_neg,
             B=self.B,
             T=self.T,
@@ -149,8 +150,8 @@ class Trainer(object):
                     self.g_data,
                     self.generate_samples,
                     self.path_neg)
-                self.d_data = DiscriminatorGenerator(
-                    path_pos=self.path_pos,
+                self.d_data = DiscriminatorSentenceGenerator(
+                    path_pos=self.path_pos_sentence,
                     path_neg=self.path_neg,
                     B=self.B,
                     T=self.T,
