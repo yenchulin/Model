@@ -127,6 +127,7 @@ class Trainer(object):
         print("Adversarial training")
         step_loss_d = []
         step_loss_g = []
+        rewards = []
 
         for step in range(steps):
             # Generator training
@@ -137,11 +138,14 @@ class Trainer(object):
                     self.env.reset_sentence()
                     state = self.env.get_previous_sentence(t) # previous sentence (B, N)
                     g_loss = 0
+                    reward_verbose = 0
                     for n in range(self.N):
                         action = self.agent.act(state, epsilon=0.0)  # a word (B, 1) ex. [[20], [2239], [word id]...] or [[0], [0], [0]...] if is the end of sentence
-                        reward = self.env.step(action, t, n)
+                        reward = self.env.step(action, t, n) # (B, 1)
                         g_loss += self.agent.generator.update(state, action, reward) / self.N # Policy gradient, update generator LSTM h, c, parameters, calulate loss for tha whole sentence
+                        reward_verbose += np.mean(reward.reshape(self.B)) / self.N # mean for the batch and each word in the sentence
                     step_loss_g.append(g_loss)
+                    rewards.append(reward_verbose)
 
             # Discriminator training
             for _ in range(d_steps):
@@ -168,7 +172,7 @@ class Trainer(object):
             self.eps = max(self.eps*(1- float(step) / steps * 4), 1e-4)
         
         # Plot generator loss (a loss for each sentence)
-        step_loss_g = np.array(step_loss_g)
+        step_loss_g = np.array(step_loss_g) # (steps * g_steps * T, )
         xlabelName, ylabelName = "Steps", "G Loss"
         top = os.getcwd()
         images = os.path.join(top, 'data', 'save')
@@ -176,12 +180,21 @@ class Trainer(object):
         plotLineChart(range(1, steps * g_steps * self.T + 1), step_loss_g, xlabelName, ylabelName, figname)
 
         # Plot discriminator loss
-        step_loss_d = np.array(step_loss_d)
+        step_loss_d = np.array(step_loss_d) # (steps * d_steps, d_epochs, )
         xlabelName, ylabelName = "Steps", "D Loss"
         top = os.getcwd()
         images = os.path.join(top, 'data', 'save')
         figname = os.path.join(images, 'discriminator_loss.png')
-        plotLineChart(range(1, steps * d_steps + 1), step_loss_d.reshape(steps * d_steps,), xlabelName, ylabelName, figname)
+        plotLineChart(range(1, steps * d_steps * d_epochs + 1), step_loss_d.reshape(steps * d_steps * d_epochs,), xlabelName, ylabelName, figname)
+
+        # Plot reward
+        rewards = np.array(rewards) # (steps * g_steps * T, )
+        xlabelName, ylabelName = "Steps", "Rewards"
+        top = os.getcwd()
+        images = os.path.join(top, 'data', 'save')
+        figname = os.path.join(images, 'rewards.png')
+        plotLineChart(range(1, steps * g_steps * self.T + 1), rewards, xlabelName, ylabelName, figname)
+
 
     def save(self, g_path, d_path):
         self.agent.save(g_path)
