@@ -2,7 +2,7 @@ import numpy as np
 import keras
 import keras.backend as K
 from keras.models import Model
-from keras.layers import Input, Lambda, Activation, Dropout, concatenate, Reshape, RepeatVector
+from keras.layers import Input, GaussianNoise, Lambda, Activation, Dropout, concatenate, Reshape, RepeatVector
 from keras.layers import Dense, Embedding, LSTM, Conv1D, GlobalMaxPooling1D
 from keras.layers import Activation
 from keras.layers.wrappers import TimeDistributed
@@ -175,7 +175,8 @@ class Generator():
         p_c_in = tf.placeholder(tf.float32, shape=(None, 512)) # paragraph RNN initial cell state
 
         out = Reshape((1, self.N))(state_sentence) # (B, 1, N)
-        
+        out = GaussianNoise(1)(out)
+
         wordEmbedding = Embedding(self.V, 512, mask_zero=True, name='WordEmbedding')
         out = wordEmbedding(out) # (B, 1, N, 512)
         self.layers.append(wordEmbedding)
